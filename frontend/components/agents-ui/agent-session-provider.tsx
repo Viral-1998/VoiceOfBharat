@@ -1,4 +1,5 @@
-import { Room } from 'livekit-client';
+import { useEffect } from 'react';
+import { Room, RoomEvent } from 'livekit-client';
 import {
   RoomAudioRenderer,
   type RoomAudioRendererProps,
@@ -50,12 +51,30 @@ export type AgentSessionProviderProps = SessionProviderProps &
 export function AgentSessionProvider({
   session,
   children,
+  room,
   ...roomAudioRendererProps
 }: AgentSessionProviderProps) {
+  const activeRoom = room ?? session.room;
+
+  useEffect(() => {
+    if (!activeRoom) return;
+
+    // Handle agent events data stream topic (lk.agent.events) to prevent "no handler" warning
+    const handleDataReceived = () => {
+      // Event stream handled cleanly
+    };
+
+    activeRoom.on(RoomEvent.DataReceived, handleDataReceived);
+
+    return () => {
+      activeRoom.off(RoomEvent.DataReceived, handleDataReceived);
+    };
+  }, [activeRoom]);
+
   return (
     <SessionProvider session={session}>
       {children}
-      <RoomAudioRenderer {...roomAudioRendererProps} />
+      <RoomAudioRenderer room={activeRoom} {...roomAudioRendererProps} />
     </SessionProvider>
   );
 }

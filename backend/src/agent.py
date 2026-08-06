@@ -1,4 +1,5 @@
 import logging
+import time
 
 from dotenv import load_dotenv
 from livekit import rtc
@@ -9,42 +10,43 @@ from livekit.agents import (
     JobContext,
     JobProcess,
     cli,
-    inference,
-    tokenize,
     room_io,
+    tokenize,
 )
-from livekit.plugins import murf, silero, google, deepgram, noise_cancellation
+from livekit.plugins import deepgram, google, murf, noise_cancellation, silero
 from livekit.plugins.turn_detector.multilingual import MultilingualModel
 
 logger = logging.getLogger("agent")
 
 load_dotenv(".env.local")
 
-# Change this prompt to change what your voice agent does.
-# See README.md for example prompts (customer support, language tutor, receptionist).
-SYSTEM_PROMPT = """You are a friendly and efficient customer support agent for a tech company. Help users with account issues, billing questions, and product troubleshooting. Be concise, empathetic, and solution-oriented. If you don't know something, say so honestly and offer to escalate. Your responses are concise and without complex formatting, emojis, or symbols."""
+# =============================================================================
+# DAY 1 — TRACK: Health Access (#VoiceForBharat)
+# VOICE: Anisha (en-IN) — Murf Falcon Indian English Voice
+# VOICE JUSTIFICATION:
+# "Anisha's calm, articulate, and warm Indian English voice instils medical
+# trust, clarity, and reassurance essential for rural telehealth guidance."
+# =============================================================================
+
+SYSTEM_PROMPT = """You are 'Arogya Seva', an empathetic, clear, and calm telehealth and health access voice assistant for Bharat.
+Your goal is to provide accessible, easy-to-understand health guidance, preventive care advice, and preliminary triage information for rural and urban callers.
+
+Guidelines:
+- Speak with a warm, reassuring, and respectful tone appropriate for healthcare.
+- Keep responses short and concise (1 to 3 simple sentences) so it sounds natural over audio.
+- Never give definitive medical diagnoses or prescribe prescription medicines. Always recommend consulting a registered medical practitioner or visiting the nearest Primary Health Centre (PHC) for urgent or severe symptoms.
+- Do NOT use markdown symbols, bullet points, emojis, or complex medical jargon. Speak naturally and clearly in spoken English.
+- Always mention your track 'Health Access' if asked about your purpose."""
+
+VOICE_JUSTIFICATION = (
+    "Anisha (en-IN) selected for Health Access track: "
+    "A calm, articulate Indian English voice that delivers high clarity and reassurance for health guidance."
+)
 
 
-class Assistant(Agent):
+class HealthAccessAssistant(Agent):
     def __init__(self) -> None:
         super().__init__(instructions=SYSTEM_PROMPT)
-
-    # To add tools, use the @function_tool decorator.
-    # Here's an example that adds a simple weather tool.
-    # You also have to add `from livekit.agents import function_tool, RunContext` to the top of this file
-    # @function_tool
-    # async def lookup_weather(self, context: RunContext, location: str):
-    #     """Use this tool to look up current weather information in the given location.
-    #
-    #     If the location is not supported by the weather service, the tool will indicate this. You must tell the user the location's weather is unavailable.
-    #
-    #     Args:
-    #         location: The location to look up weather information for (e.g. city name)
-    #     """
-    #
-    #     logger.info(f"Looking up weather for {location}")
-    #
-    #     return "sunny with a temperature of 70 degrees."
 
 
 server = AgentServer()
@@ -52,6 +54,12 @@ server = AgentServer()
 
 def prewarm(proc: JobProcess):
     proc.userdata["vad"] = silero.VAD.load()
+    logger.info("=" * 60)
+    logger.info("🚀 10 Days of Voice Agents — #VoiceForBharat | Day 1")
+    logger.info("Track: Health Access (Arogya Seva Voice Assistant)")
+    logger.info("Voice: Murf Falcon (Anisha / en-IN)")
+    logger.info(f"Justification: {VOICE_JUSTIFICATION}")
+    logger.info("=" * 60)
 
 
 server.setup_fnc = prewarm
@@ -59,61 +67,56 @@ server.setup_fnc = prewarm
 
 @server.rtc_session(agent_name="my-agent")
 async def my_agent(ctx: JobContext):
-    # Logging setup
-    # Add any other context you want in all log entries here
     ctx.log_context_fields = {
         "room": ctx.room.name,
+        "track": "Health Access",
     }
 
-    # Set up a voice AI pipeline using Murf Falcon, Gemini, Deepgram, and the LiveKit turn detector
+    # Tracking latency from end-of-user-speech to first audio output
+    last_user_speech_end_time = [None]
+
     session = AgentSession(
-        # Speech-to-text (STT) is your agent's ears, turning the user's speech into text that the LLM can understand
-        # See all available models at https://docs.livekit.io/agents/models/stt/
+        # Speech-to-text (STT) via Deepgram Nova-3
         stt=deepgram.STT(model="nova-3"),
-        # A Large Language Model (LLM) is your agent's brain, processing user input and generating a response
-        # See all available models at https://docs.livekit.io/agents/models/llm/
+        # LLM via Google Gemini 2.5 Flash (official v1beta supported model)
         llm=google.LLM(
-                model="gemini-3.5-flash-lite",
-            ),
-        # Text-to-speech (TTS) is your agent's voice, turning the LLM's text into speech that the user can hear
-        # See all available models as well as voice selections at https://docs.livekit.io/agents/models/tts/
+            model="gemini-2.5-flash",
+        ),
+        # Murf Falcon TTS — Fastest production speech engine (55ms latency)
         tts=murf.TTS(
-                voice="Anisha", 
-                locale="en-IN",
-                style="Conversation",
-                tokenizer=tokenize.basic.SentenceTokenizer(min_sentence_len=2),
-                text_pacing=True
-            ),
-        # VAD and turn detection are used to determine when the user is speaking and when the agent should respond
-        # See more at https://docs.livekit.io/agents/build/turns
+            voice="Anisha",
+            locale="en-IN",
+            style="Conversation",
+            tokenizer=tokenize.basic.SentenceTokenizer(min_sentence_len=2),
+            text_pacing=True,
+        ),
         turn_detection=MultilingualModel(),
         vad=ctx.proc.userdata["vad"],
-        # allow the LLM to generate a response while waiting for the end of turn
-        # See more at https://docs.livekit.io/agents/build/audio/#preemptive-generation
         preemptive_generation=True,
     )
 
-    # To use a realtime model instead of a voice pipeline, use the following session setup instead.
-    # (Note: This is for the OpenAI Realtime API. For other providers, see https://docs.livekit.io/agents/models/realtime/))
-    # 1. Install livekit-agents[openai]
-    # 2. Set OPENAI_API_KEY in .env.local
-    # 3. Add `from livekit.plugins import openai` to the top of this file
-    # 4. Use the following session setup instead of the version above
-    # session = AgentSession(
-    #     llm=openai.realtime.RealtimeModel(voice="marin")
-    # )
+    # Event handlers for Latency Logging (Advanced Requirement)
+    @session.on("user_speech_committed")
+    def _on_user_speech_committed(msg):
+        last_user_speech_end_time[0] = time.perf_counter()
+        logger.info("🎙️ User speech finished. Sent to LLM & Murf Falcon TTS...")
 
-    # # Add a virtual avatar to the session, if desired
-    # # For other providers, see https://docs.livekit.io/agents/models/avatar/
-    # avatar = hedra.AvatarSession(
-    #   avatar_id="...",  # See https://docs.livekit.io/agents/models/avatar/plugins/hedra
-    # )
-    # # Start the avatar and wait for it to join
-    # await avatar.start(session, room=ctx.room)
+    @session.on("agent_speech_started")
+    def _on_agent_speech_started():
+        if last_user_speech_end_time[0] is not None:
+            latency_ms = (time.perf_counter() - last_user_speech_end_time[0]) * 1000
+            logger.info(
+                f"⚡ [LATENCY LOG] End-of-user-speech to first audio output: {latency_ms:.2f} ms"
+            )
+            last_user_speech_end_time[0] = None
 
-    # Start the session, which initializes the voice pipeline and warms up the models
+    @session.on("metrics_collected")
+    def _on_metrics_collected(metrics):
+        logger.info(f"📊 [SESSION METRICS] {metrics}")
+
+    # Start session and connect to LiveKit room
     await session.start(
-        agent=Assistant(),
+        agent=HealthAccessAssistant(),
         room=ctx.room,
         room_options=room_io.RoomOptions(
             audio_input=room_io.AudioInputOptions(
@@ -127,9 +130,41 @@ async def my_agent(ctx: JobContext):
         ),
     )
 
-    # Join the room and connect to the user
     await ctx.connect()
 
 
 if __name__ == "__main__":
+    import os
+    import sys
+
+    required_keys = [
+        "LIVEKIT_URL",
+        "LIVEKIT_API_KEY",
+        "LIVEKIT_API_SECRET",
+        "MURF_API_KEY",
+        "DEEPGRAM_API_KEY",
+        "GOOGLE_API_KEY",
+    ]
+
+    missing = []
+    for key in required_keys:
+        val = os.getenv(key, "")
+        if not val or "your_" in val or "your-project" in val:
+            missing.append(key)
+
+    if missing:
+        print("\n" + "=" * 70)
+        print("⚠️  MISSING / PLACEHOLDER API KEYS DETECTED:")
+        print("   The following keys in backend/.env.local are not configured:")
+        for k in missing:
+            print(f"   - {k}")
+        print("\n   👉 Please edit backend/.env.local and add your real API keys:")
+        print("   - LiveKit:   https://cloud.livekit.io/")
+        print("   - Murf AI:   https://murf.ai/api/dashboard")
+        print("   - Deepgram:  https://deepgram.com")
+        print("   - Gemini:    https://aistudio.google.com/apikey")
+        print("=" * 70 + "\n")
+
+    if len(sys.argv) == 1:
+        sys.argv.append("dev")
     cli.run_app(server)

@@ -49,9 +49,23 @@ export function StartAudioButton({
   const roomEnsured = useEnsureRoom(room);
   const { mergedProps } = useStartAudio({ room: roomEnsured, props });
 
+  // If mergedProps style display is none, livekit hides the button (audio is allowed)
+  if (mergedProps.style?.display === 'none') {
+    return null;
+  }
+
   return (
-    <Button size={size} variant={variant} {...props} {...mergedProps}>
-      {label}
-    </Button>
+    <div className="fixed top-6 left-1/2 z-[100] -translate-x-1/2 animate-bounce">
+      <Button
+        size="lg"
+        variant={variant}
+        {...props}
+        {...mergedProps}
+        className="flex cursor-pointer items-center gap-2 rounded-full border border-white/50 bg-cyan-500 px-6 py-3 font-mono text-xs font-bold text-slate-950 uppercase shadow-[0_0_30px_rgba(6,182,212,0.8)] hover:bg-cyan-400"
+      >
+        <span>🔊</span>
+        <span>{label || 'CLICK TO ENABLE VOICE AUDIO'}</span>
+      </Button>
+    </div>
   );
 }
