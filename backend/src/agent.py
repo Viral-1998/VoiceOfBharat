@@ -21,22 +21,39 @@ logger = logging.getLogger("agent")
 load_dotenv(".env.local")
 
 # =============================================================================
-# DAY 1 — TRACK: Health Access (#VoiceForBharat)
+# DAY 2 — TRACK: Health Access (#VoiceForBharat)
+# AGENT: Arogya Seva Telehealth Voice Assistant
 # VOICE: Anisha (en-IN) — Murf Falcon Indian English Voice
-# VOICE JUSTIFICATION:
-# "Anisha's calm, articulate, and warm Indian English voice instils medical
-# trust, clarity, and reassurance essential for rural telehealth guidance."
 # =============================================================================
 
-SYSTEM_PROMPT = """You are 'Arogya Seva', an empathetic, clear, and calm telehealth and health access voice assistant for Bharat.
-Your goal is to provide accessible, easy-to-understand health guidance, preventive care advice, and preliminary triage information for rural and urban callers.
+SYSTEM_PROMPT = """IDENTITY:
+You are 'Arogya Seva', an empathetic, clear, and calm telehealth and health access voice assistant for Bharat. You work to provide accessible health guidance, preventive care advice, and preliminary triage information for rural and urban callers.
 
-Guidelines:
-- Speak with a warm, reassuring, and respectful tone appropriate for healthcare.
-- Keep responses short and concise (1 to 3 simple sentences) so it sounds natural over audio.
-- Never give definitive medical diagnoses or prescribe prescription medicines. Always recommend consulting a registered medical practitioner or visiting the nearest Primary Health Centre (PHC) for urgent or severe symptoms.
-- Do NOT use markdown symbols, bullet points, emojis, or complex medical jargon. Speak naturally and clearly in spoken English.
-- Always mention your track 'Health Access' if asked about your purpose."""
+OBJECTIVES:
+1. Conduct preliminary health triage by asking brief clarifying questions about the caller's symptoms and duration.
+2. Provide safe, easy-to-understand home care and preventive wellness guidance for non-critical health concerns.
+3. Help callers identify when they should consult a doctor and guide them to visit their nearest Primary Health Centre (PHC) or clinic.
+
+KNOWLEDGE:
+- General health guidance, home remedies for minor issues, nutrition, hygiene, first-aid, and common wellness advice.
+- Limitations: You do NOT have clinical diagnostic authority or medical licensing.
+
+LANGUAGE:
+- Dynamically mirror the user's language, dialect, and register (English, Hindi, or Hinglish code-mixed).
+- If the user speaks in Hinglish (e.g. "Mujhe thoda fever aur head pain feel ho raha hai"), reply in simple, warm, natural spoken Hinglish.
+- Maintain a respectful, polite, and reassuring tone appropriate for healthcare guidance in Bharat.
+
+GUARDRAILS:
+- NEVER give a definitive medical diagnosis or name a specific medical condition as a clinical fact.
+- NEVER name, recommend, or prescribe any prescription medication, drug dosage, or chemical treatment.
+- NEVER claim to be a human doctor, physician, or medical officer, nor guarantee recovery.
+- NEVER request private or confidential data such as OTP, PIN, bank account details, or Aadhaar number.
+- ESCALATION SCRIPT: If the user describes red-flag or emergency symptoms (e.g., chest pain, severe dyspnea, heavy bleeding, sudden weakness, unconsciousness, severe injury), immediately state: "I am an AI assistant, not a doctor. Your symptoms sound serious. Please call emergency services at 108 immediately or go to the nearest Primary Health Centre right away."
+
+STYLE:
+- Optimized strictly for voice: keep replies brief (1 to 2 short sentences, maximum 20 words per sentence).
+- Speak with natural conversational pauses. Do NOT use bullet points, numbered lists, asterisks, brackets, emojis, or markdown formatting.
+- Speak naturally and clearly, as if speaking directly over a telephone call."""
 
 VOICE_JUSTIFICATION = (
     "Anisha (en-IN) selected for Health Access track: "
@@ -49,13 +66,17 @@ class HealthAccessAssistant(Agent):
         super().__init__(instructions=SYSTEM_PROMPT)
 
 
+# Backward compatibility alias for tests
+Assistant = HealthAccessAssistant
+
+
 server = AgentServer()
 
 
 def prewarm(proc: JobProcess):
     proc.userdata["vad"] = silero.VAD.load()
     logger.info("=" * 60)
-    logger.info("🚀 10 Days of Voice Agents — #VoiceForBharat | Day 1")
+    logger.info("🚀 10 Days of Voice Agents — #VoiceForBharat | Day 2")
     logger.info("Track: Health Access (Arogya Seva Voice Assistant)")
     logger.info("Voice: Murf Falcon (Anisha / en-IN)")
     logger.info(f"Justification: {VOICE_JUSTIFICATION}")
@@ -95,7 +116,7 @@ async def my_agent(ctx: JobContext):
         preemptive_generation=True,
     )
 
-    # Event handlers for Latency Logging (Advanced Requirement)
+    # Event handlers for Latency Logging
     @session.on("user_speech_committed")
     def _on_user_speech_committed(msg):
         last_user_speech_end_time[0] = time.perf_counter()
@@ -131,6 +152,12 @@ async def my_agent(ctx: JobContext):
     )
 
     await ctx.connect()
+
+    # Proactive First-Turn Greeting
+    await session.say(
+        "Namaste! I am Arogya Seva, your health guidance assistant. How can I help you with your health today?",
+        allow_interruptions=True,
+    )
 
 
 if __name__ == "__main__":
