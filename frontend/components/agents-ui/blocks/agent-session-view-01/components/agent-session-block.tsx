@@ -3,12 +3,14 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { AnimatePresence, type MotionProps, motion } from 'motion/react';
 import { useAgent, useSessionContext, useSessionMessages } from '@livekit/components-react';
+import { Brain, Microphone, ShieldCheck, SpeakerHigh, SpinnerGap } from '@phosphor-icons/react';
 import { AgentChatTranscript } from '@/components/agents-ui/agent-chat-transcript';
 import {
   AgentControlBar,
   type AgentControlBarControls,
 } from '@/components/agents-ui/agent-control-bar';
 import { Shimmer } from '@/components/ai-elements/shimmer';
+import { MicPermissionModal } from '@/components/app/mic-permission-modal';
 import { cn } from '@/lib/shadcn/utils';
 import { TileLayout } from './tile-view';
 
@@ -102,67 +104,31 @@ export function Fade({ top = false, bottom = false, className }: FadeProps) {
 }
 
 export interface AgentSessionView_01Props {
-  /**
-   * Message shown above the controls before the first chat message is sent.
-   *
-   * @default 'Agent is listening, ask it a question'
-   */
   preConnectMessage?: string;
-  /**
-   * Enables or disables the chat toggle and transcript input controls.
-   *
-   * @default true
-   */
   supportsChatInput?: boolean;
-  /**
-   * Enables or disables camera controls in the bottom control bar.
-   *
-   * @default true
-   */
   supportsVideoInput?: boolean;
-  /**
-   * Enables or disables screen sharing controls in the bottom control bar.
-   *
-   * @default true
-   */
   supportsScreenShare?: boolean;
-  /**
-   * Shows a pre-connect buffer state with a shimmer message before messages appear.
-   *
-   * @default true
-   */
   isPreConnectBufferEnabled?: boolean;
-
-  /** Selects the visualizer style rendered in the main tile area. */
   audioVisualizerType?: 'bar' | 'wave' | 'grid' | 'radial' | 'aura';
-  /** Primary hex color used by supported audio visualizer variants. */
   audioVisualizerColor?: `#${string}`;
-  /** Hue shift intensity used by certain visualizers. */
   audioVisualizerColorShift?: number;
-  /** Number of bars to render when `audioVisualizerType` is `bar`. */
   audioVisualizerBarCount?: number;
-  /** Number of rows in the visualizer when `audioVisualizerType` is `grid`. */
   audioVisualizerGridRowCount?: number;
-  /** Number of columns in the visualizer when `audioVisualizerType` is `grid`. */
   audioVisualizerGridColumnCount?: number;
-  /** Number of radial bars when `audioVisualizerType` is `radial`. */
   audioVisualizerRadialBarCount?: number;
-  /** Base radius of the radial visualizer when `audioVisualizerType` is `radial`. */
   audioVisualizerRadialRadius?: number;
-  /** Stroke width of the wave path when `audioVisualizerType` is `wave`. */
   audioVisualizerWaveLineWidth?: number;
-  /** Optional class name merged onto the outer `<section>` container. */
   className?: string;
 }
 
 export function AgentSessionView_01({
-  preConnectMessage = 'Agent is listening, ask it a question',
+  preConnectMessage = 'Arogya Seva is listening, ask your health query...',
   supportsChatInput = true,
-  supportsVideoInput = true,
-  supportsScreenShare = true,
+  supportsVideoInput = false,
+  supportsScreenShare = false,
   isPreConnectBufferEnabled = true,
 
-  audioVisualizerType,
+  audioVisualizerType = 'aura',
   audioVisualizerColor,
   audioVisualizerColorShift,
   audioVisualizerBarCount,
@@ -177,7 +143,8 @@ export function AgentSessionView_01({
 }: React.ComponentProps<'section'> & AgentSessionView_01Props) {
   const session = useSessionContext();
   const { messages } = useSessionMessages(session);
-  const [chatOpen, setChatOpen] = useState(false);
+  const [chatOpen, setChatOpen] = useState(true); // Open live transcript by default for Day 3 live transcript requirement
+  const [micErrorOpen, setMicErrorOpen] = useState(false);
   const scrollAreaRef = useRef<HTMLDivElement>(null);
   const { state: agentState } = useAgent();
 
@@ -198,15 +165,79 @@ export function AgentSessionView_01({
     }
   }, [messages]);
 
+  // Check microphone permissions / device errors
+  const handleRetryMic = async () => {
+    setMicErrorOpen(false);
+    try {
+      await navigator.mediaDevices.getUserMedia({ audio: true });
+    } catch {
+      setMicErrorOpen(true);
+    }
+  };
+
+  // Agent State Text & Icon Mapping for Step 2 & Step 3 Requirements
+  const renderStateBadge = () => {
+    if (!session.isConnected) {
+      return (
+        <div className="flex animate-pulse items-center gap-2 rounded-full border border-blue-500/40 bg-blue-950/80 px-4 py-1.5 font-mono text-xs font-bold text-blue-300 shadow-lg shadow-blue-500/20">
+          <SpinnerGap size={16} className="animate-spin text-blue-400" />
+          <span>CONNECTING TO AROGYA SEVA... PLEASE WAIT</span>
+        </div>
+      );
+    }
+
+    switch (agentState) {
+      case 'listening':
+        return (
+          <div className="flex items-center gap-2 rounded-full border border-emerald-500/50 bg-emerald-950/90 px-4 py-1.5 font-mono text-xs font-bold text-emerald-300 shadow-lg shadow-emerald-500/20">
+            <span className="relative flex size-2.5">
+              <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-emerald-400 opacity-75" />
+              <span className="relative inline-flex size-2.5 rounded-full bg-emerald-500" />
+            </span>
+            <Microphone size={16} weight="fill" className="text-emerald-400" />
+            <span>LISTENING TO YOU...</span>
+          </div>
+        );
+      case 'speaking':
+        return (
+          <div className="flex items-center gap-2 rounded-full border border-cyan-500/50 bg-cyan-950/90 px-4 py-1.5 font-mono text-xs font-bold text-cyan-300 shadow-lg shadow-cyan-500/20">
+            <SpeakerHigh size={18} weight="fill" className="animate-bounce text-cyan-400" />
+            <span>AROGYA SEVA IS SPEAKING (MURF FALCON)</span>
+          </div>
+        );
+      case 'thinking':
+        return (
+          <div className="flex items-center gap-2 rounded-full border border-violet-500/50 bg-violet-950/90 px-4 py-1.5 font-mono text-xs font-bold text-violet-300 shadow-lg shadow-violet-500/20">
+            <Brain size={16} weight="fill" className="animate-pulse text-violet-400" />
+            <span>THINKING &amp; PROCESSING...</span>
+          </div>
+        );
+      default:
+        return (
+          <div className="flex items-center gap-2 rounded-full border border-slate-700 bg-slate-900/90 px-4 py-1.5 font-mono text-xs font-bold text-slate-300">
+            <ShieldCheck size={16} className="text-emerald-400" />
+            <span>AROGYA SEVA CONNECTED</span>
+          </div>
+        );
+    }
+  };
+
   return (
     <section
       ref={ref}
       className={cn('bg-background relative z-10 h-full w-full overflow-hidden', className)}
       {...props}
     >
-      <Fade top className="absolute inset-x-4 top-0 z-10 h-40" />
-      {/* transcript */}
+      {/* Top Banner with Day 3 Agent State Display */}
+      <div className="pointer-events-none absolute inset-x-0 top-3 z-[60] flex flex-col items-center justify-center gap-2 px-4">
+        <div className="pointer-events-auto flex items-center gap-2 rounded-full backdrop-blur-md">
+          {renderStateBadge()}
+        </div>
+      </div>
 
+      <Fade top className="absolute inset-x-4 top-0 z-10 h-32" />
+
+      {/* Live Transcript Display */}
       <div className="absolute top-0 bottom-[135px] flex w-full flex-col md:bottom-[170px]">
         <AnimatePresence>
           {chatOpen && (
@@ -217,13 +248,14 @@ export function AgentSessionView_01({
               <AgentChatTranscript
                 agentState={agentState}
                 messages={messages}
-                className="mx-auto w-full max-w-2xl [&_.is-user>div]:rounded-[22px] [&>div>div]:px-4 [&>div>div]:pt-40 md:[&>div>div]:px-6"
+                className="mx-auto w-full max-w-2xl [&_.is-user>div]:rounded-[22px] [&>div>div]:px-4 [&>div>div]:pt-36 md:[&>div>div]:px-6 md:[&>div>div]:pt-44"
               />
             </motion.div>
           )}
         </AnimatePresence>
       </div>
-      {/* Tile layout */}
+
+      {/* Tile layout with Audio Visualizer */}
       <TileLayout
         chatOpen={chatOpen}
         audioVisualizerType={audioVisualizerType}
@@ -236,7 +268,15 @@ export function AgentSessionView_01({
         audioVisualizerGridColumnCount={audioVisualizerGridColumnCount}
         audioVisualizerWaveLineWidth={audioVisualizerWaveLineWidth}
       />
-      {/* Bottom */}
+
+      {/* Microphone Permission Modal */}
+      <MicPermissionModal
+        isOpen={micErrorOpen}
+        onRetry={handleRetryMic}
+        onClose={() => setMicErrorOpen(false)}
+      />
+
+      {/* Bottom Controls */}
       <motion.div
         {...BOTTOM_VIEW_MOTION_PROPS}
         className="absolute inset-x-3 bottom-0 z-50 md:inset-x-12"
@@ -250,7 +290,7 @@ export function AgentSessionView_01({
                 duration={2}
                 aria-hidden={messages.length > 0}
                 {...SHIMMER_MOTION_PROPS}
-                className="pointer-events-none mx-auto block w-full max-w-2xl pb-4 text-center text-sm font-semibold"
+                className="pointer-events-none mx-auto block w-full max-w-2xl pb-4 text-center text-sm font-semibold text-emerald-300"
               >
                 {preConnectMessage}
               </MotionMessage>

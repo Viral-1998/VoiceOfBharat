@@ -33,20 +33,21 @@ export interface AppConfig {
 }
 
 export const APP_CONFIG_DEFAULTS: AppConfig = {
-  companyName: 'Murf AI',
-  pageTitle: 'Voice Agent Starter',
-  pageDescription: 'A voice agent powered by Murf Falcon — the fastest TTS API',
+  companyName: 'Arogya Seva',
+  pageTitle: 'Arogya Seva — Telehealth Voice Assistant | #VoiceForBharat',
+  pageDescription:
+    'Empathetic telehealth and health access voice assistant for Bharat powered by Murf Falcon TTS',
 
   supportsChatInput: true,
-  supportsVideoInput: true,
-  supportsScreenShare: true,
+  supportsVideoInput: false,
+  supportsScreenShare: false,
   isPreConnectBufferEnabled: true,
 
   logo: '/murf-logo.svg',
-  accent: '#6366F1',
+  accent: '#10B981',
   logoDark: '/murf-logo-dark.svg',
-  accentDark: '#818cf8',
-  startButtonText: 'Start talking',
+  accentDark: '#34D399',
+  startButtonText: 'Start Health Consultation',
 
   // optional: audio visualization configuration
   // audioVisualizerType: 'bar',

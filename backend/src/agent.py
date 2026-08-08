@@ -97,16 +97,15 @@ async def my_agent(ctx: JobContext):
     last_user_speech_end_time = [None]
 
     session = AgentSession(
-        # Speech-to-text (STT) via Deepgram Nova-3
-        stt=deepgram.STT(model="nova-3"),
-        # LLM via Google Gemini 2.5 Flash (official v1beta supported model)
+        # Speech-to-text (STT) via Deepgram Nova-3 (language="multi" for multilingual detection)
+        stt=deepgram.STT(model="nova-3", language="multi"),
+        # LLM via Google Gemini 2.5 Flash (active free tier quota)
         llm=google.LLM(
             model="gemini-2.5-flash",
         ),
-        # Murf Falcon TTS — Fastest production speech engine (55ms latency)
+        # Murf Falcon TTS — dynamic multi-locale voice synthesis
         tts=murf.TTS(
             voice="Anisha",
-            locale="en-IN",
             style="Conversation",
             tokenizer=tokenize.basic.SentenceTokenizer(min_sentence_len=2),
             text_pacing=True,
