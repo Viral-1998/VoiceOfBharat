@@ -9,39 +9,53 @@ from livekit.agents import (
     AgentSession,
     JobContext,
     JobProcess,
+    RunContext,
     cli,
+    function_tool,
     room_io,
     tokenize,
 )
 from livekit.plugins import deepgram, google, murf, noise_cancellation, silero
 from livekit.plugins.turn_detector.multilingual import MultilingualModel
 
+import db
+
 logger = logging.getLogger("agent")
 
 load_dotenv(".env.local")
 
 # =============================================================================
-# DAY 2 — TRACK: Health Access (#VoiceForBharat)
-# AGENT: Arogya Seva Telehealth Voice Assistant
+# DAY 4 — TRACK: Health Access (#VoiceForBharat)
+# AGENT: Arogya Seva Telehealth Voice Assistant (with Persistent Memory & Privacy)
 # VOICE: Anisha (en-IN) — Murf Falcon Indian English Voice
 # =============================================================================
 
 SYSTEM_PROMPT = """IDENTITY:
-You are 'Arogya Seva', an empathetic, clear, and calm telehealth and health access voice assistant for Bharat. You work to provide accessible health guidance, preventive care advice, and preliminary triage information for rural and urban callers.
+You are 'Arogya Seva', an empathetic, clear, and calm telehealth and health access voice assistant for Bharat. You provide accessible health guidance, preventive care advice, preliminary triage information, and remember returning callers with privacy-first consent.
 
 OBJECTIVES:
 1. Conduct preliminary health triage by asking brief clarifying questions about the caller's symptoms and duration.
 2. Provide safe, easy-to-understand home care and preventive wellness guidance for non-critical health concerns.
 3. Help callers identify when they should consult a doctor and guide them to visit their nearest Primary Health Centre (PHC) or clinic.
+4. Manage caller memory using function tools: look up returning callers (`lookup_caller`), save caller profiles after receiving explicit consent (`save_caller`), and delete memory upon request (`forget_caller`).
 
-KNOWLEDGE:
-- General health guidance, home remedies for minor issues, nutrition, hygiene, first-aid, and common wellness advice.
-- Limitations: You do NOT have clinical diagnostic authority or medical licensing.
+MEMORY & PRIVACY CONSENT (HARD RULE):
+- You have tools to access SQLite memory: `lookup_caller`, `save_caller`, and `forget_caller`.
+- BEFORE saving any caller information or facts (name, age band, ongoing conditions, triage outcome), you MUST explicitly ask the caller for consent. Example: "May I save your name and basic health details so I can remember you next time?"
+- If the caller says YES (agrees), call the `save_caller` tool immediately with their details.
+- If the caller says NO (denies consent), DO NOT call `save_caller`. Respect their choice and confirm that their details will not be saved.
+- If the caller asks to be forgotten or to delete their records ("Forget me", "Delete my record"), call `forget_caller` immediately.
+- For returning callers, use `lookup_caller` if needed, greet them warmly by name, and follow up on their previous triage outcome.
 
-LANGUAGE:
-- Dynamically mirror the user's language, dialect, and register (English, Hindi, or Hinglish code-mixed).
-- If the user speaks in Hinglish (e.g. "Mujhe thoda fever aur head pain feel ho raha hai"), reply in simple, warm, natural spoken Hinglish.
-- Maintain a respectful, polite, and reassuring tone appropriate for healthcare guidance in Bharat.
+HEALTH ACCESS FACTS BOUNDARY:
+- Only store non-confidential structured facts: `age_band`, `ongoing_conditions`, and `last_triage_outcome`.
+- NEVER store written-out medical notes, clinical diagnostic claims, prescription dosages, government IDs (Aadhaar/PAN), OTPs, or financial details.
+
+LANGUAGE & SCRIPT:
+Always write every language in its own native script:
+- Hindi → Devanagari script (e.g. नमस्ते), never romanized (never write "namaste" when responding in Hindi).
+- Same rule for all non-English languages.
+- Dynamically mirror the user's language (English, Hindi, or Hinglish code-mixed).
 
 GUARDRAILS:
 - NEVER give a definitive medical diagnosis or name a specific medical condition as a clinical fact.
@@ -65,6 +79,78 @@ class HealthAccessAssistant(Agent):
     def __init__(self) -> None:
         super().__init__(instructions=SYSTEM_PROMPT)
 
+    @function_tool
+    async def lookup_caller(self, context: RunContext, user_id: str = "") -> str:
+        """Look up a caller's saved facts from the database by user_id or identity.
+
+        Args:
+            user_id: The unique identifier or phone number of the caller.
+        """
+        if not user_id:
+            user_id = "default_caller"
+        caller = db.get_caller(user_id)
+        if not caller:
+            return f"No record found for caller '{user_id}'."
+        return (
+            f"Caller Record Found:\n"
+            f"Name: {caller['name']}\n"
+            f"Language Preference: {caller['language_preference']}\n"
+            f"Facts: {caller['facts']}\n"
+            f"Last Interaction: {caller['last_interaction']}"
+        )
+
+    @function_tool
+    async def save_caller(
+        self,
+        context: RunContext,
+        name: str,
+        language_preference: str = "English",
+        age_band: str = "Not specified",
+        ongoing_conditions: str = "None",
+        last_triage_outcome: str = "Triage completed",
+        user_id: str = "",
+    ) -> str:
+        """Save or update caller information in the database.
+        IMPORTANT: Only call this tool AFTER the caller has given explicit verbal consent.
+
+        Args:
+            name: The caller's name.
+            language_preference: Caller's preferred language (e.g., English, Hindi, Hinglish).
+            age_band: Caller's age group (e.g., '30-40', 'Senior (60+)').
+            ongoing_conditions: Brief summary of ongoing health conditions (e.g., 'Mild fever', 'Hypertension').
+            last_triage_outcome: Summary outcome or advice given during triage.
+            user_id: Unique caller ID (defaults to 'default_caller' if not specified).
+        """
+        if not user_id:
+            user_id = "default_caller"
+
+        facts = {
+            "age_band": age_band,
+            "ongoing_conditions": ongoing_conditions,
+            "last_triage_outcome": last_triage_outcome,
+        }
+        db.save_caller(
+            user_id=user_id,
+            name=name,
+            language_preference=language_preference,
+            facts=facts,
+        )
+        return f"Successfully saved memory for {name} (ID: {user_id})."
+
+    @function_tool
+    async def forget_caller(self, context: RunContext, user_id: str = "") -> str:
+        """Delete caller information from the database upon request ('forget me').
+
+        Args:
+            user_id: Unique caller ID (defaults to 'default_caller' if not specified).
+        """
+        if not user_id:
+            user_id = "default_caller"
+        success = db.delete_caller(user_id)
+        if success:
+            return f"Successfully deleted memory for caller ID '{user_id}'."
+        return f"No memory record was found to delete for caller ID '{user_id}'."
+
 
 # Backward compatibility alias for tests
 Assistant = HealthAccessAssistant
@@ -75,9 +161,11 @@ server = AgentServer()
 
 def prewarm(proc: JobProcess):
     proc.userdata["vad"] = silero.VAD.load()
+    db.init_db()
     logger.info("=" * 60)
-    logger.info("🚀 10 Days of Voice Agents — #VoiceForBharat | Day 2")
+    logger.info("🚀 10 Days of Voice Agents — #VoiceForBharat | Day 4")
     logger.info("Track: Health Access (Arogya Seva Voice Assistant)")
+    logger.info("Feature: Persistent Memory & Privacy Consent (SQLite)")
     logger.info("Voice: Murf Falcon (Anisha / en-IN)")
     logger.info(f"Justification: {VOICE_JUSTIFICATION}")
     logger.info("=" * 60)
@@ -93,15 +181,26 @@ async def my_agent(ctx: JobContext):
         "track": "Health Access",
     }
 
+    db.init_db()
+
+    # Determine caller user_id from room participants or room identity
+    user_id = "default_caller"
+    for participant in ctx.room.remote_participants.values():
+        if participant.identity:
+            user_id = participant.identity
+            break
+
+    caller_profile = db.get_caller(user_id)
+
     # Tracking latency from end-of-user-speech to first audio output
     last_user_speech_end_time = [None]
 
     session = AgentSession(
         # Speech-to-text (STT) via Deepgram Nova-3 (language="multi" for multilingual detection)
         stt=deepgram.STT(model="nova-3", language="multi"),
-        # LLM via Google Gemini 2.5 Flash (active free tier quota)
+        # LLM via Google Gemini 3.5 Flash Lite (Day 4 recommended model)
         llm=google.LLM(
-            model="gemini-2.5-flash",
+            model="gemini-3.5-flash-lite",
         ),
         # Murf Falcon TTS — dynamic multi-locale voice synthesis
         tts=murf.TTS(
@@ -152,9 +251,21 @@ async def my_agent(ctx: JobContext):
 
     await ctx.connect()
 
-    # Proactive First-Turn Greeting
+    # Dynamic greeting based on returning caller memory
+    if caller_profile:
+        name = caller_profile["name"]
+        last_outcome = caller_profile["facts"].get(
+            "last_triage_outcome", "our previous health consultation"
+        )
+        greeting_text = (
+            f"Namaste {name}, welcome back to Arogya Seva! Last time we spoke about {last_outcome}. "
+            f"How are you feeling today?"
+        )
+    else:
+        greeting_text = "Namaste! I am Arogya Seva, your health guidance assistant. How can I help you with your health today?"
+
     await session.say(
-        "Namaste! I am Arogya Seva, your health guidance assistant. How can I help you with your health today?",
+        greeting_text,
         allow_interruptions=True,
     )
 
