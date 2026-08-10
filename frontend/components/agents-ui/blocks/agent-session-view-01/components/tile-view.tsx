@@ -119,7 +119,7 @@ export function TileLayout({
             ])}
           >
             <AnimatePresence mode="popLayout">
-              {!isAvatar && (
+              {!isAvatar && !chatOpen && (
                 // Audio Agent
                 <motion.div
                   key="agent"

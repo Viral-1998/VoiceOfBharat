@@ -168,6 +168,20 @@ If the agent doesn't connect, double-check that both services point to the same 
 
 ---
 
+## Day 5 — Adding Domain Data Tools & Fallbacks (#VoiceForBharat)
+
+### Track: Health Access — Arogya Seva Assistant
+
+For Day 5, Arogya Seva is equipped with function tools that fetch real domain data for healthcare access in Bharat:
+
+1. **`lookup_nearest_phc`**: Looks up Primary Health Centres (PHCs), CHCs, and District Hospitals by district (e.g. Pune, Mumbai, Delhi, Jaipur, Bengaluru, Patna, Lucknow) or 6-digit pincode. Provides exact addresses, contact numbers, bed availability, emergency numbers (108), and live timestamping.
+2. **`classify_symptom_triage`**: Evaluates symptoms against medical triage levels (RED Emergency / YELLOW Urgent Care / GREEN Mild Home Care).
+3. **Data Source Disclosure**: Uses a **curated local domain dataset** (based on National Health Facility Registry & PM-ABHIM directory schema) with dynamic live timestamping (`as of today, August 10, 2026`).
+4. **Graceful Failure Path Out Loud**: When testing offline mode (`simulate_offline=True`), the agent gracefully catches registry portal timeouts and speaks a clear fallback instruction advising callers to dial emergency services at **108** or national health helpline **104** instead of remaining silent or inventing data.
+5. **Tool Chaining (Advanced)**: Extracts the caller's saved district from Day 4 memory (`lookup_caller`) and passes it directly into `lookup_nearest_phc` without re-asking their location.
+
+---
+
 ## Change the Use Case
 
 The default system prompt makes this a **customer support agent**. You can change the agent’s behavior by editing the prompt.

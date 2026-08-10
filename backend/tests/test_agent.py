@@ -161,3 +161,55 @@ async def test_consent_denial_drops_save() -> None:
                 """,
             )
         )
+
+
+@pytest.mark.asyncio
+async def test_phc_lookup_tool_firing() -> None:
+    """Evaluation of the agent's tool call for nearest PHC health facility lookup."""
+    async with (
+        _llm() as llm_inst,
+        AgentSession(llm=llm_inst) as session,
+    ):
+        await session.start(Assistant())
+
+        result = await session.run(
+            user_input="Where is the nearest Primary Health Centre in Pune?"
+        )
+
+        await (
+            result.expect.next_event()
+            .is_message(role="assistant")
+            .judge(
+                llm_inst,
+                intent="""
+                Mentions the nearest Primary Health Centre or District Hospital in Pune (such as Aundh PHC).
+                Provides useful contact or facility information spoken naturally.
+                """,
+            )
+        )
+
+
+@pytest.mark.asyncio
+async def test_symptom_triage_tool_firing() -> None:
+    """Evaluation of the agent's symptom triage classification tool firing."""
+    async with (
+        _llm() as llm_inst,
+        AgentSession(llm=llm_inst) as session,
+    ):
+        await session.start(Assistant())
+
+        result = await session.run(
+            user_input="I have had a fever and mild cough for 2 days. How urgently do I need to see a doctor?"
+        )
+
+        await (
+            result.expect.next_event()
+            .is_message(role="assistant")
+            .judge(
+                llm_inst,
+                intent="""
+                Provides triage assessment or guidance (e.g. home monitoring or visiting PHC if fever persists).
+                Does not prescribe drugs or provide definitive clinical diagnosis.
+                """,
+            )
+        )

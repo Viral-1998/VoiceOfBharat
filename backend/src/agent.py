@@ -19,25 +19,30 @@ from livekit.plugins import deepgram, google, murf, noise_cancellation, silero
 from livekit.plugins.turn_detector.multilingual import MultilingualModel
 
 import db
+import health_data
 
 logger = logging.getLogger("agent")
 
 load_dotenv(".env.local")
 
 # =============================================================================
-# DAY 4 — TRACK: Health Access (#VoiceForBharat)
-# AGENT: Arogya Seva Telehealth Voice Assistant (with Persistent Memory & Privacy)
+# DAY 5 — TRACK: Health Access (#VoiceForBharat)
+# AGENT: Arogya Seva Telehealth Voice Assistant (with Real Domain Data & Tools)
 # VOICE: Anisha (en-IN) — Murf Falcon Indian English Voice
 # =============================================================================
 
 SYSTEM_PROMPT = """IDENTITY:
-You are 'Arogya Seva', an empathetic, clear, and calm telehealth and health access voice assistant for Bharat. You provide accessible health guidance, preventive care advice, preliminary triage information, and remember returning callers with privacy-first consent.
+You are 'Arogya Seva', an empathetic, clear, and calm telehealth and health access voice assistant for Bharat. You provide accessible health guidance, preventive care advice, preliminary triage classification, real domain health facility lookups, and remember returning callers with privacy-first consent.
 
 OBJECTIVES:
-1. Conduct preliminary health triage by asking brief clarifying questions about the caller's symptoms and duration.
-2. Provide safe, easy-to-understand home care and preventive wellness guidance for non-critical health concerns.
-3. Help callers identify when they should consult a doctor and guide them to visit their nearest Primary Health Centre (PHC) or clinic.
-4. Manage caller memory using function tools: look up returning callers (`lookup_caller`), save caller profiles after receiving explicit consent (`save_caller`), and delete memory upon request (`forget_caller`).
+1. Classify symptom triage level using `classify_symptom_triage` when callers describe symptoms or ask about urgency.
+2. Lookup real Primary Health Centres (PHCs), CHCs, and District Hospitals using `lookup_nearest_phc` when callers ask for nearby facilities, clinics, bed availability, or emergency contacts.
+3. Support Tool Chaining: If caller's district or location is available in memory (`lookup_caller`), use that district directly in `lookup_nearest_phc` without re-asking location.
+4. Handle API / portal failure gracefully out loud: If `lookup_nearest_phc` returns service unavailable or offline status, inform the caller calmly and clearly that the registry is unreachable and advise calling emergency 108 or 104 health helpline immediately.
+5. Manage caller memory using function tools: `lookup_caller`, `save_caller` (only after explicit consent), and `forget_caller`.
+
+TIMESTAMPING & DATA SOURCES (HARD RULE):
+- Whenever returning health facility data or triage classification, state when the data is from (e.g. "Data from National Health Facility Registry as of today" or state the timestamp returned by the tool).
 
 MEMORY & PRIVACY CONSENT (HARD RULE):
 - You have tools to access SQLite memory: `lookup_caller`, `save_caller`, and `forget_caller`.
@@ -48,7 +53,7 @@ MEMORY & PRIVACY CONSENT (HARD RULE):
 - For returning callers, use `lookup_caller` if needed, greet them warmly by name, and follow up on their previous triage outcome.
 
 HEALTH ACCESS FACTS BOUNDARY:
-- Only store non-confidential structured facts: `age_band`, `ongoing_conditions`, and `last_triage_outcome`.
+- Only store non-confidential structured facts: `age_band`, `ongoing_conditions`, `district`, and `last_triage_outcome`.
 - NEVER store written-out medical notes, clinical diagnostic claims, prescription dosages, government IDs (Aadhaar/PAN), OTPs, or financial details.
 
 LANGUAGE & SCRIPT:
@@ -80,6 +85,79 @@ class HealthAccessAssistant(Agent):
         super().__init__(instructions=SYSTEM_PROMPT)
 
     @function_tool
+    async def lookup_nearest_phc(
+        self,
+        context: RunContext,
+        district_or_pincode: str,
+        state: str = "",
+        simulate_offline: bool = False,
+    ) -> str:
+        """Look up nearest Primary Health Centre (PHC), Community Health Centre (CHC), or District Hospital by district name or pincode.
+        Call this tool whenever the caller asks for nearby health facilities, clinics, hospitals, emergency helplines, or bed availability.
+
+        Args:
+            district_or_pincode: District name (e.g. 'Pune', 'Mumbai', 'Delhi', 'Jaipur') or Indian pincode.
+            state: Optional Indian state name (e.g. 'Maharashtra', 'Rajasthan').
+            simulate_offline: Set to True ONLY if testing or user asks to test offline/failure mode.
+        """
+        res = health_data.lookup_phc_data(
+            district_or_pincode=district_or_pincode,
+            state=state,
+            simulate_offline=simulate_offline,
+        )
+
+        if res.get("status") == "error":
+            # Graceful failure instruction
+            return f"FAILURE ERROR ({res.get('timestamp')}): {res.get('message')}"
+
+        facilities = res.get("facilities", [])
+        if not facilities:
+            return f"No registered health centres found for '{district_or_pincode}' as of {res.get('timestamp')}. Advise caller to call national health helpline 104 or emergency 108."
+
+        fac = facilities[0]
+        beds = fac.get("available_beds", 0)
+        phone = fac.get("phone", "104")
+        addr = fac.get("address", "")
+        name = fac.get("name", "District PHC")
+        timestamp = res.get("timestamp")
+
+        return (
+            f"Health Facility Data (Source: {res.get('data_source')}, as of {timestamp}):\n"
+            f"Facility: {name}\n"
+            f"Address: {addr}\n"
+            f"Contact Phone: {phone}\n"
+            f"Emergency Helpline: 108\n"
+            f"Available Beds: {beds}\n"
+            f"Operating Hours: {fac.get('operating_hours')}"
+        )
+
+    @function_tool
+    async def classify_symptom_triage(
+        self,
+        context: RunContext,
+        symptoms: str,
+        duration_days: int = 1,
+    ) -> str:
+        """Classify symptom clinical triage urgency (RED Emergency, YELLOW Urgent Doctor Visit, GREEN Home Care).
+        Call this tool whenever the caller describes physical symptoms, fever, pain, or asks how urgently they need medical care.
+
+        Args:
+            symptoms: Caller's described symptoms (e.g. 'fever and headache for 2 days', 'severe chest pain').
+            duration_days: Number of days symptoms have persisted.
+        """
+        res = health_data.classify_triage_engine(
+            symptoms=symptoms,
+            duration_days=duration_days,
+        )
+        return (
+            f"Triage Assessment Result (Guideline Source: {res.get('guideline_source')}, evaluated on {res.get('timestamp')}):\n"
+            f"Triage Level: {res.get('triage_level')}\n"
+            f"Urgency: {res.get('urgency_window')}\n"
+            f"Recommended Action: {res.get('action_recommended')}\n"
+            f"Clinical Rationale: {res.get('clinical_rationale')}"
+        )
+
+    @function_tool
     async def lookup_caller(self, context: RunContext, user_id: str = "") -> str:
         """Look up a caller's saved facts from the database by user_id or identity.
 
@@ -107,6 +185,7 @@ class HealthAccessAssistant(Agent):
         language_preference: str = "English",
         age_band: str = "Not specified",
         ongoing_conditions: str = "None",
+        district: str = "Not specified",
         last_triage_outcome: str = "Triage completed",
         user_id: str = "",
     ) -> str:
@@ -118,6 +197,7 @@ class HealthAccessAssistant(Agent):
             language_preference: Caller's preferred language (e.g., English, Hindi, Hinglish).
             age_band: Caller's age group (e.g., '30-40', 'Senior (60+)').
             ongoing_conditions: Brief summary of ongoing health conditions (e.g., 'Mild fever', 'Hypertension').
+            district: Caller's location or district (e.g. 'Pune', 'Jaipur', 'Mumbai').
             last_triage_outcome: Summary outcome or advice given during triage.
             user_id: Unique caller ID (defaults to 'default_caller' if not specified).
         """
@@ -127,6 +207,7 @@ class HealthAccessAssistant(Agent):
         facts = {
             "age_band": age_band,
             "ongoing_conditions": ongoing_conditions,
+            "district": district,
             "last_triage_outcome": last_triage_outcome,
         }
         db.save_caller(
