@@ -19,7 +19,7 @@ def get_connection() -> sqlite3.Connection:
 
 
 def init_db() -> None:
-    """Initialize SQLite database table for caller memory."""
+    """Initialize SQLite database tables for caller memory, outbound calls, and opt-out registry."""
     with get_connection() as conn:
         cursor = conn.cursor()
         cursor.execute(
@@ -30,6 +30,30 @@ def init_db() -> None:
                 language_preference TEXT DEFAULT 'English',
                 facts TEXT NOT NULL,
                 last_interaction TEXT NOT NULL
+            );
+            """
+        )
+        cursor.execute(
+            """
+            CREATE TABLE IF NOT EXISTS outbound_calls (
+                call_id TEXT PRIMARY KEY,
+                phone_number TEXT NOT NULL,
+                patient_name TEXT NOT NULL,
+                reminder_type TEXT NOT NULL,
+                status TEXT NOT NULL,
+                retry_count INTEGER DEFAULT 0,
+                next_retry_at TEXT,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL
+            );
+            """
+        )
+        cursor.execute(
+            """
+            CREATE TABLE IF NOT EXISTS opt_out_registry (
+                identifier TEXT PRIMARY KEY,
+                opt_out_time TEXT NOT NULL,
+                reason TEXT DEFAULT 'User requested opt-out during call'
             );
             """
         )
@@ -110,3 +134,98 @@ def delete_caller(user_id: str) -> bool:
     if deleted:
         logger.info(f"Deleted memory for caller {user_id}")
     return deleted
+
+
+# =============================================================================
+# OUTBOUND CALL & OPT-OUT REGISTRY HELPER FUNCTIONS (DAY 6)
+# =============================================================================
+
+
+def is_opted_out(identifier: str) -> bool:
+    """Check if a phone number or user_id is in the opt-out registry."""
+    init_db()
+    with get_connection() as conn:
+        cursor = conn.cursor()
+        cursor.execute(
+            "SELECT identifier FROM opt_out_registry WHERE identifier = ?",
+            (identifier,),
+        )
+        return cursor.fetchone() is not None
+
+
+def register_opt_out(identifier: str, reason: str = "User requested opt-out during call") -> bool:
+    """Add phone number or user_id to the opt-out registry."""
+    init_db()
+    now_iso = datetime.now(timezone.utc).isoformat()
+    with get_connection() as conn:
+        cursor = conn.cursor()
+        cursor.execute(
+            """
+            INSERT INTO opt_out_registry (identifier, opt_out_time, reason)
+            VALUES (?, ?, ?)
+            ON CONFLICT(identifier) DO UPDATE SET
+                opt_out_time = excluded.opt_out_time,
+                reason = excluded.reason;
+            """,
+            (identifier, now_iso, reason),
+        )
+        conn.commit()
+    logger.info(f"Registered opt-out for {identifier}")
+    return True
+
+
+def log_outbound_call(
+    call_id: str,
+    phone_number: str,
+    patient_name: str,
+    reminder_type: str = "Medication Follow-up",
+    status: str = "initiated",
+) -> dict[str, Any]:
+    """Log a new outbound call in the database."""
+    init_db()
+    now_iso = datetime.now(timezone.utc).isoformat()
+    with get_connection() as conn:
+        cursor = conn.cursor()
+        cursor.execute(
+            """
+            INSERT INTO outbound_calls (
+                call_id, phone_number, patient_name, reminder_type, status, retry_count, created_at, updated_at
+            ) VALUES (?, ?, ?, ?, ?, 0, ?, ?);
+            """,
+            (call_id, phone_number, patient_name, reminder_type, status, now_iso, now_iso),
+        )
+        conn.commit()
+    return {
+        "call_id": call_id,
+        "phone_number": phone_number,
+        "patient_name": patient_name,
+        "reminder_type": reminder_type,
+        "status": status,
+        "created_at": now_iso,
+    }
+
+
+def update_call_outcome(
+    call_id: str,
+    outcome: str,
+    next_retry_iso: Optional[str] = None,
+) -> bool:
+    """Update call status and retry details based on outcome (e.g., completed, no_answer, busy, voicemail, immediate_hangup, opt_out)."""
+    init_db()
+    now_iso = datetime.now(timezone.utc).isoformat()
+    with get_connection() as conn:
+        cursor = conn.cursor()
+        cursor.execute(
+            """
+            UPDATE outbound_calls
+            SET status = ?,
+                retry_count = retry_count + CASE WHEN ? IN ('no_answer', 'busy', 'immediate_hangup') THEN 1 ELSE 0 END,
+                next_retry_at = ?,
+                updated_at = ?
+            WHERE call_id = ?;
+            """,
+            (outcome, outcome, next_retry_iso, now_iso, call_id),
+        )
+        conn.commit()
+        return cursor.rowcount > 0
+

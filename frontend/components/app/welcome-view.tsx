@@ -1,4 +1,12 @@
-import { Heartbeat, PhoneDisconnect, ShieldCheck, Translate } from '@phosphor-icons/react';
+import { useState } from 'react';
+import {
+  Heartbeat,
+  PhoneDisconnect,
+  PhoneOutgoing,
+  ShieldCheck,
+  Translate,
+} from '@phosphor-icons/react';
+import { OutboundModal } from '@/components/app/outbound-modal';
 import { Button } from '@/components/ui/button';
 
 function CyberOrbIcon({ isCallEnded }: { isCallEnded?: boolean }) {
@@ -41,15 +49,19 @@ function CyberOrbIcon({ isCallEnded }: { isCallEnded?: boolean }) {
 interface WelcomeViewProps {
   startButtonText: string;
   onStartCall: () => void;
+  onDispatchOutboundCall?: (token: string, roomName: string, serverUrl: string) => void;
   isCallEnded?: boolean;
 }
 
 export const WelcomeView = ({
   startButtonText,
   onStartCall,
+  onDispatchOutboundCall,
   isCallEnded = false,
   ref,
 }: React.ComponentProps<'div'> & WelcomeViewProps) => {
+  const [isOutboundModalOpen, setIsOutboundModalOpen] = useState(false);
+
   return (
     <div ref={ref} className="relative z-10 mx-auto w-full max-w-2xl px-4 py-6 font-sans">
       {/* Outer Health Access Container */}
@@ -66,7 +78,7 @@ export const WelcomeView = ({
               SYS.STATUS // {isCallEnded ? 'CALL ENDED (DISCONNECTED)' : 'READY (ONLINE)'}
             </span>
           </div>
-          <div>#VoiceForBharat · DAY 03</div>
+          <div>#VoiceForBharat · DAY 06</div>
           <div className="flex items-center gap-1 text-teal-300">
             <ShieldCheck size={14} weight="fill" />
             <span>MURF FALCON TTS</span>
@@ -81,8 +93,8 @@ export const WelcomeView = ({
           <span className="rounded-md border border-teal-500/30 bg-teal-500/10 px-3 py-1 font-mono text-[11px] font-semibold tracking-wider text-teal-300">
             VOICE: ANISHA (MURF FALCON 2)
           </span>
-          <span className="flex items-center gap-1 rounded-md border border-cyan-500/30 bg-cyan-500/10 px-2.5 py-1 font-mono text-[11px] font-semibold tracking-wider text-cyan-300">
-            <Translate size={14} /> MULTILINGUAL (EN/HI/HINGLISH)
+          <span className="flex items-center gap-1 rounded-md border border-purple-500/30 bg-purple-500/10 px-2.5 py-1 font-mono text-[11px] font-semibold tracking-wider text-purple-300">
+            <PhoneOutgoing size={14} /> DAY 06: OUTBOUND CALLS
           </span>
         </div>
 
@@ -99,7 +111,7 @@ export const WelcomeView = ({
             </h1>
             <p className="mb-6 max-w-md font-mono text-xs leading-relaxed text-slate-300 md:text-sm">
               Your health guidance session with Arogya Seva has ended. You can start a new
-              consultation anytime.
+              consultation or trigger an outbound call.
             </p>
           </>
         ) : (
@@ -108,10 +120,10 @@ export const WelcomeView = ({
               [ AGENT STATE: READY ]
             </div>
             <h1 className="mb-2 bg-gradient-to-r from-emerald-400 via-teal-300 to-cyan-400 bg-clip-text font-mono text-3xl font-black tracking-tight text-transparent uppercase md:text-4xl">
-              Arogya Seva // Voice AI
+              Arogya Seva // Outbound AI
             </h1>
             <p className="mb-6 max-w-md font-mono text-xs leading-relaxed text-slate-300 md:text-sm">
-              Empathetic telehealth & preliminary health access assistant for Bharat powered by{' '}
+              Empathetic telehealth & health follow-up voice assistant for Bharat powered by{' '}
               <span className="font-semibold text-emerald-300 underline decoration-emerald-500/50">
                 Murf Falcon TTS
               </span>
@@ -130,51 +142,57 @@ export const WelcomeView = ({
           </div>
           <div className="rounded-lg border border-teal-500/20 bg-slate-950/70 p-2.5">
             <div className="text-[10px] font-bold tracking-wider text-teal-400 uppercase">
-              STT MODEL
+              OUTBOUND SIP
             </div>
-            <div className="text-xs font-semibold text-slate-200">Nova-3 (Multi)</div>
+            <div className="text-xs font-semibold text-teal-300">LiveKit / Twilio</div>
           </div>
           <div className="rounded-lg border border-cyan-500/20 bg-slate-950/70 p-2.5">
             <div className="text-[10px] font-bold tracking-wider text-cyan-400 uppercase">
-              LATENCY
+              GUARDRAIL
             </div>
-            <div className="text-xs font-semibold text-emerald-400">~55ms Ultra-fast</div>
+            <div className="text-xs font-semibold text-emerald-400">Step 4 Compliant</div>
           </div>
         </div>
 
-        {/* Sample Prompt Chips */}
-        {!isCallEnded && (
-          <div className="mb-6 w-full max-w-lg text-left">
-            <div className="mb-2 font-mono text-[10px] font-bold tracking-widest text-emerald-400 uppercase">
-              &#47;&#47; COMMON HEALTH QUESTIONS:
-            </div>
-            <div className="flex flex-wrap gap-2 font-mono text-xs">
-              <span className="rounded-md border border-emerald-500/30 bg-slate-900/80 px-3 py-1.5 text-slate-300">
-                &quot;What home remedies help for a mild fever?&quot;
-              </span>
-              <span className="rounded-md border border-emerald-500/30 bg-slate-900/80 px-3 py-1.5 text-slate-300">
-                &quot;When should I visit the nearest PHC?&quot;
-              </span>
-              <span className="rounded-md border border-teal-500/30 bg-slate-900/80 px-3 py-1.5 text-slate-300">
-                &quot;Mujhe sar dard aur bukhar feel ho raha hai&quot;
-              </span>
-            </div>
-          </div>
-        )}
+        {/* Action Buttons: Inbound vs Outbound */}
+        <div className="flex w-full max-w-lg flex-col gap-3 sm:flex-row">
+          <Button
+            size="lg"
+            onClick={onStartCall}
+            className={`flex-1 rounded-xl py-6 font-mono text-xs font-bold tracking-widest text-slate-950 uppercase shadow-lg transition-all duration-300 hover:scale-105 ${
+              isCallEnded
+                ? 'bg-gradient-to-r from-amber-400 via-emerald-400 to-teal-400 shadow-[0_0_30px_rgba(245,158,11,0.4)]'
+                : 'bg-gradient-to-r from-emerald-400 via-teal-400 to-cyan-400 shadow-[0_0_30px_rgba(16,185,129,0.4)]'
+            }`}
+          >
+            [ {isCallEnded ? 'INBOUND CALL' : startButtonText.toUpperCase()} ]
+          </Button>
 
-        {/* Start / Restart Consultation Button */}
-        <Button
-          size="lg"
-          onClick={onStartCall}
-          className={`w-full rounded-xl py-6 font-mono text-xs font-bold tracking-widest text-slate-950 uppercase shadow-lg transition-all duration-300 hover:scale-105 md:w-80 ${
-            isCallEnded
-              ? 'bg-gradient-to-r from-amber-400 via-emerald-400 to-teal-400 shadow-[0_0_30px_rgba(245,158,11,0.4)] hover:shadow-[0_0_45px_rgba(16,185,129,0.7)]'
-              : 'bg-gradient-to-r from-emerald-400 via-teal-400 to-cyan-400 shadow-[0_0_30px_rgba(16,185,129,0.4)] hover:shadow-[0_0_45px_rgba(16,185,129,0.7)]'
-          }`}
-        >
-          [ {isCallEnded ? 'START NEW CONSULTATION' : startButtonText.toUpperCase()} ]
-        </Button>
+          <Button
+            size="lg"
+            variant="outline"
+            onClick={() => setIsOutboundModalOpen(true)}
+            className="flex-1 rounded-xl border border-teal-500/50 bg-slate-900/80 py-6 font-mono text-xs font-bold tracking-widest text-teal-300 uppercase shadow-lg transition-all duration-300 hover:scale-105 hover:bg-slate-800 hover:text-teal-200"
+          >
+            <span className="flex items-center justify-center gap-2">
+              <PhoneOutgoing size={18} weight="bold" /> DISPATCH OUTBOUND CALL
+            </span>
+          </Button>
+        </div>
       </section>
+
+      {/* Outbound Dispatch Modal */}
+      <OutboundModal
+        isOpen={isOutboundModalOpen}
+        onClose={() => setIsOutboundModalOpen(false)}
+        onDispatchOutbound={(token, roomName, serverUrl) => {
+          if (onDispatchOutboundCall) {
+            onDispatchOutboundCall(token, roomName, serverUrl);
+          } else {
+            onStartCall();
+          }
+        }}
+      />
 
       {/* Footer */}
       <div className="mt-4 flex w-full items-center justify-center font-mono">

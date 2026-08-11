@@ -48,6 +48,15 @@ export function ViewController({ appConfig }: ViewControllerProps) {
     start();
   };
 
+  const handleDispatchOutboundCall = (token: string, roomName: string, serverUrl: string) => {
+    start({
+      serverUrl,
+      roomName,
+      participantName: 'Outbound Patient',
+      participantToken: token,
+    });
+  };
+
   return (
     <AnimatePresence mode="wait">
       {/* Ready View & Call Ended View */}
@@ -58,6 +67,7 @@ export function ViewController({ appConfig }: ViewControllerProps) {
           startButtonText={appConfig.startButtonText}
           isCallEnded={hasConnectedOnce}
           onStartCall={handleStartCall}
+          onDispatchOutboundCall={handleDispatchOutboundCall}
         />
       )}
       {/* Active Session View (Connecting, Listening, Speaking, Thinking) */}

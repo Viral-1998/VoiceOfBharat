@@ -1,4 +1,8 @@
+import asyncio
+import contextlib
+import json
 import logging
+import os
 import time
 
 from dotenv import load_dotenv
@@ -40,6 +44,12 @@ OBJECTIVES:
 3. Support Tool Chaining: If caller's district or location is available in memory (`lookup_caller`), use that district directly in `lookup_nearest_phc` without re-asking location.
 4. Handle API / portal failure gracefully out loud: If `lookup_nearest_phc` returns service unavailable or offline status, inform the caller calmly and clearly that the registry is unreachable and advise calling emergency 108 or 104 health helpline immediately.
 5. Manage caller memory using function tools: `lookup_caller`, `save_caller` (only after explicit consent), and `forget_caller`.
+6. Handle Outbound Calls & Opt-Outs (DAY 6): When making outbound calls, state who is calling, why, and how to opt out in the first two sentences. If the caller requests to opt out ("opt out", "stop calling me", "unsubscribe"), call `opt_out_caller` immediately.
+
+OUTBOUND CALL OPENING RULE (HARD COMPULSORY RULE FOR DAY 6):
+When initiating or opening an outbound call, the response MUST open with these two exact elements in the first two sentences:
+Sentence 1: State WHO is calling and WHY (e.g., "Namaste, this is Arogya Seva calling from your District Health Centre regarding your scheduled medication follow-up and vaccination reminder.")
+Sentence 2: State HOW to make it stop or opt out (e.g., "If you wish to stop receiving these outbound health reminders at any time, please say 'opt out' or press 9 to unsubscribe.")
 
 TIMESTAMPING & DATA SOURCES (HARD RULE):
 - Whenever returning health facility data or triage classification, state when the data is from (e.g. "Data from National Health Facility Registry as of today" or state the timestamp returned by the tool).
@@ -52,11 +62,14 @@ MEMORY & PRIVACY CONSENT (HARD RULE):
 - If the caller asks to be forgotten or to delete their records ("Forget me", "Delete my record"), call `forget_caller` immediately.
 - For returning callers, use `lookup_caller` if needed, greet them warmly by name, and follow up on their previous triage outcome.
 
+OPT-OUT & UNSUBSCRIBE REGISTRY (HARD RULE):
+- If the user says "opt out", "stop calling me", "unsubscribe", "don't call again", or presses 9, invoke `opt_out_caller` immediately. Confirm politely that they have been unsubscribed and end the call gracefully.
+
 HEALTH ACCESS FACTS BOUNDARY:
 - Only store non-confidential structured facts: `age_band`, `ongoing_conditions`, `district`, and `last_triage_outcome`.
 - NEVER store written-out medical notes, clinical diagnostic claims, prescription dosages, government IDs (Aadhaar/PAN), OTPs, or financial details.
 
-LANGUAGE & SCRIPT:
+LANGUAGE & SCRIPT (COMPULSORY HARD RULE):
 Always write every language in its own native script:
 - Hindi → Devanagari script (e.g. नमस्ते), never romanized (never write "namaste" when responding in Hindi).
 - Same rule for all non-English languages.
@@ -232,6 +245,25 @@ class HealthAccessAssistant(Agent):
             return f"Successfully deleted memory for caller ID '{user_id}'."
         return f"No memory record was found to delete for caller ID '{user_id}'."
 
+    @function_tool
+    async def opt_out_caller(
+        self,
+        context: RunContext,
+        phone_number: str = "",
+        reason: str = "User requested opt-out during call",
+    ) -> str:
+        """Register the caller or phone number in the opt-out registry to stop future outbound calls.
+        Call this tool immediately whenever the caller asks to opt out, stop receiving calls, or unsubscribe.
+
+        Args:
+            phone_number: The caller's phone number or identifier.
+            reason: Reason for opt-out request.
+        """
+        if not phone_number:
+            phone_number = "default_caller"
+        db.register_opt_out(phone_number, reason=reason)
+        return f"Successfully registered opt-out for '{phone_number}'. No further outbound calls will be made."
+
 
 # Backward compatibility alias for tests
 Assistant = HealthAccessAssistant
@@ -244,9 +276,9 @@ def prewarm(proc: JobProcess):
     proc.userdata["vad"] = silero.VAD.load()
     db.init_db()
     logger.info("=" * 60)
-    logger.info("🚀 10 Days of Voice Agents — #VoiceForBharat | Day 4")
-    logger.info("Track: Health Access (Arogya Seva Voice Assistant)")
-    logger.info("Feature: Persistent Memory & Privacy Consent (SQLite)")
+    logger.info("🚀 10 Days of Voice Agents — #VoiceForBharat | Day 6")
+    logger.info("Track: Health Access (Arogya Seva Telehealth Voice Assistant)")
+    logger.info("Feature: Outbound Calling & Opt-Out Registry (Twilio/LiveKit SIP)")
     logger.info("Voice: Murf Falcon (Anisha / en-IN)")
     logger.info(f"Justification: {VOICE_JUSTIFICATION}")
     logger.info("=" * 60)
@@ -264,25 +296,43 @@ async def my_agent(ctx: JobContext):
 
     db.init_db()
 
-    # Determine caller user_id from room participants or room identity
-    user_id = "default_caller"
-    for participant in ctx.room.remote_participants.values():
-        if participant.identity:
-            user_id = participant.identity
-            break
+    # Parse room metadata for outbound call details
+    room_meta = {}
+    if ctx.room.metadata:
+        with contextlib.suppress(Exception):
+            room_meta = json.loads(ctx.room.metadata)
 
-    caller_profile = db.get_caller(user_id)
+    is_outbound = (
+        room_meta.get("is_outbound", False)
+        or "outbound" in ctx.room.name.lower()
+    )
+    patient_name = room_meta.get("patient_name", "")
+    reminder_type = room_meta.get(
+        "reminder_type", "scheduled medication follow-up and vaccination reminder"
+    )
+    call_id = room_meta.get("call_id", "")
 
     # Tracking latency from end-of-user-speech to first audio output
     last_user_speech_end_time = [None]
 
+    # LLM Provider Selection (Groq > OpenAI > Google Gemini)
+    if os.getenv("GROQ_API_KEY"):
+        from livekit.plugins import groq
+        llm_instance = groq.LLM(model="llama-3.3-70b-versatile")
+        logger.info("🤖 LLM Engine: Groq llama-3.3-70b-versatile (Free 14,400 requests/day)")
+    elif os.getenv("OPENAI_API_KEY"):
+        from livekit.plugins import openai
+        llm_instance = openai.LLM(model="gpt-4o-mini")
+        logger.info("🤖 LLM Engine: OpenAI gpt-4o-mini")
+    else:
+        llm_instance = google.LLM(model="gemini-3.5-flash")
+        logger.info("🤖 LLM Engine: Google Gemini (gemini-3.5-flash)")
+
     session = AgentSession(
         # Speech-to-text (STT) via Deepgram Nova-3 (language="multi" for multilingual detection)
         stt=deepgram.STT(model="nova-3", language="multi"),
-        # LLM via Google Gemini 3.5 Flash Lite (Day 4 recommended model)
-        llm=google.LLM(
-            model="gemini-3.5-flash-lite",
-        ),
+        # LLM Engine
+        llm=llm_instance,
         # Murf Falcon TTS — dynamic multi-locale voice synthesis
         tts=murf.TTS(
             voice="Anisha",
@@ -314,7 +364,7 @@ async def my_agent(ctx: JobContext):
     def _on_metrics_collected(metrics):
         logger.info(f"📊 [SESSION METRICS] {metrics}")
 
-    # Start session and connect to LiveKit room
+    # Start session event listeners on room
     await session.start(
         agent=HealthAccessAssistant(),
         room=ctx.room,
@@ -330,10 +380,50 @@ async def my_agent(ctx: JobContext):
         ),
     )
 
+    # Connect worker to LiveKit room
     await ctx.connect()
 
-    # Dynamic greeting based on returning caller memory
-    if caller_profile:
+    # Wait for recipient to connect to room
+    try:
+        participant = await ctx.wait_for_participant()
+        logger.info(f"👤 Remote participant connected: {participant.identity} ({participant.name})")
+    except Exception as e:
+        logger.warning(f"⚠️ Note on participant wait: {e}")
+
+    # For outbound calls, pause 1 second to allow SIP audio channel on softphone/phone to stabilize
+    if is_outbound:
+        await asyncio.sleep(1.0)
+
+    # Determine caller user_id from connected room participants
+    user_id = "default_caller"
+    for participant in ctx.room.remote_participants.values():
+        if participant.identity:
+            user_id = participant.identity
+            break
+
+    caller_profile = db.get_caller(user_id)
+    phone_number = room_meta.get("phone_number", user_id)
+
+    # Check for opt-out status on outbound calls
+    if is_outbound and db.is_opted_out(phone_number):
+        logger.info(f"🛑 Phone number {phone_number} is on opt-out registry. Ending call.")
+        with contextlib.suppress(RuntimeError):
+            await session.say(
+                "Namaste. This phone number is registered on our opt-out list. Arogya Seva will not place further outbound calls. Goodbye.",
+                allow_interruptions=False,
+            )
+        if call_id:
+            db.update_call_outcome(call_id, outcome="opt_out")
+        return
+
+    # Determine dynamic opening speech
+    if is_outbound:
+        # STEP 4 COMPLIANCE: Must open with: (1) Who is calling & why, (2) How to opt out
+        greeting_text = (
+            f"Namaste {patient_name if patient_name else ''}, this is Arogya Seva calling from your District Health Centre regarding your {reminder_type}. "
+            f"If you wish to stop receiving these outbound health reminders at any time, please say 'opt out' or press 9 to unsubscribe."
+        )
+    elif caller_profile:
         name = caller_profile["name"]
         last_outcome = caller_profile["facts"].get(
             "last_triage_outcome", "our previous health consultation"
@@ -345,10 +435,11 @@ async def my_agent(ctx: JobContext):
     else:
         greeting_text = "Namaste! I am Arogya Seva, your health guidance assistant. How can I help you with your health today?"
 
-    await session.say(
-        greeting_text,
-        allow_interruptions=True,
-    )
+    with contextlib.suppress(RuntimeError):
+        await session.say(
+            greeting_text,
+            allow_interruptions=True,
+        )
 
 
 if __name__ == "__main__":
