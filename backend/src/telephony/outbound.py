@@ -75,7 +75,10 @@ class OutboundCallManager:
     def can_place_call(self, phone_number_or_id: str) -> tuple[bool, str]:
         """Check if caller is eligible for outbound call (not opted out)."""
         if db.is_opted_out(phone_number_or_id):
-            return False, f"Number '{phone_number_or_id}' has opted out of outbound calls."
+            return (
+                False,
+                f"Number '{phone_number_or_id}' has opted out of outbound calls.",
+            )
         return True, "Eligible"
 
     async def initiate_outbound_call(
@@ -90,7 +93,11 @@ class OutboundCallManager:
         eligible, reason = self.can_place_call(phone_number)
         if not eligible:
             logger.warning(f"🚫 Outbound call cancelled: {reason}")
-            return {"status": "opted_out", "reason": reason, "phone_number": phone_number}
+            return {
+                "status": "opted_out",
+                "reason": reason,
+                "phone_number": phone_number,
+            }
 
         sip_trunk_id = sip_trunk_id or os.getenv("SIP_TRUNK_ID", "")
         call_id = f"outbound_{uuid.uuid4().hex[:10]}"
@@ -119,7 +126,9 @@ class OutboundCallManager:
 
         logger.info("=" * 70)
         logger.info(f"📞 OUTBOUND CALL DISPATCH INITIATED [ID: {call_id}]")
-        logger.info(f"Recipient: {patient_name} ({phone_number}) -> Normalized SIP Target: '{clean_call_to}'")
+        logger.info(
+            f"Recipient: {patient_name} ({phone_number}) -> Normalized SIP Target: '{clean_call_to}'"
+        )
         logger.info(f"Reminder Context: {reminder_type}")
         logger.info(f"Target Room: {room_name}")
 
@@ -159,13 +168,21 @@ class OutboundCallManager:
                             metadata=room_metadata,
                         )
                     )
-                    logger.info(f"🤖 AGENT WORKER DISPATCHED: Dispatch ID '{agent_dispatch.id}' assigned to room '{room_name}'")
+                    logger.info(
+                        f"🤖 AGENT WORKER DISPATCHED: Dispatch ID '{agent_dispatch.id}' assigned to room '{room_name}'"
+                    )
                 except Exception as dispatch_err:
-                    logger.warning(f"⚠️ Agent dispatch warning (worker may auto-dispatch): {dispatch_err}")
+                    logger.warning(
+                        f"⚠️ Agent dispatch warning (worker may auto-dispatch): {dispatch_err}"
+                    )
 
                 # Check for SIP authentication credentials in env
-                sip_auth_user = os.getenv("SIP_AUTH_USERNAME", os.getenv("LINPHONE_USERNAME", ""))
-                sip_auth_pass = os.getenv("SIP_AUTH_PASSWORD", os.getenv("LINPHONE_PASSWORD", ""))
+                sip_auth_user = os.getenv(
+                    "SIP_AUTH_USERNAME", os.getenv("LINPHONE_USERNAME", "")
+                )
+                sip_auth_pass = os.getenv(
+                    "SIP_AUTH_PASSWORD", os.getenv("LINPHONE_PASSWORD", "")
+                )
 
                 if sip_trunk_id:
                     res = await lkapi.sip.create_sip_participant(
@@ -227,9 +244,7 @@ class OutboundCallManager:
 
                 await lkapi.aclose()
             except Exception as e:
-                logger.error(
-                    f"❌ LIVEKIT SIP DISPATCH ERROR: {e}"
-                )
+                logger.error(f"❌ LIVEKIT SIP DISPATCH ERROR: {e}")
 
         logger.info("=" * 70)
 
@@ -258,15 +273,15 @@ class OutboundCallManager:
                 phone_number, reason="User requested opt-out during outbound call"
             )
             db.update_call_outcome(call_id, outcome="opt_out", next_retry_iso=None)
-            logger.info(f"🛑 Call {call_id}: User opted out. Marked in opt-out registry.")
+            logger.info(
+                f"🛑 Call {call_id}: User opted out. Marked in opt-out registry."
+            )
             return {"status": "opt_out", "next_retry_at": None}
 
         next_retry_iso = calculate_next_retry(
             outcome, current_retry_count=current_retry_count
         )
-        db.update_call_outcome(
-            call_id, outcome=outcome, next_retry_iso=next_retry_iso
-        )
+        db.update_call_outcome(call_id, outcome=outcome, next_retry_iso=next_retry_iso)
 
         logger.info(f"📊 Call {call_id} Outcome: {outcome.upper()}")
         if next_retry_iso:

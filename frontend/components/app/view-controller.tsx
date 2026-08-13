@@ -48,13 +48,8 @@ export function ViewController({ appConfig }: ViewControllerProps) {
     start();
   };
 
-  const handleDispatchOutboundCall = (token: string, roomName: string, serverUrl: string) => {
-    start({
-      serverUrl,
-      roomName,
-      participantName: 'Outbound Patient',
-      participantToken: token,
-    });
+  const handleDispatchOutboundCall = (_token: string, _roomName: string, _serverUrl: string) => {
+    start();
   };
 
   return (

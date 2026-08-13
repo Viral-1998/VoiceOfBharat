@@ -15,8 +15,7 @@ from telephony.outbound import trigger_outbound_call
 load_dotenv(".env.local")
 
 logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s - %(levelname)s - %(message)s"
+    level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s"
 )
 logger = logging.getLogger("make_call")
 
@@ -68,8 +67,12 @@ async def main():
         print(f"🔑 Using LiveKit SIP Trunk ID: {args.sip_trunk}")
     else:
         print("\n⚠️  NOTICE: No SIP_TRUNK_ID provided in CLI or backend/.env.local!")
-        print("   To make an actual phone ring on a mobile phone (Twilio) or Linphone softphone:")
-        print("   1. Create an Outbound SIP Trunk in LiveKit Cloud Console (https://cloud.livekit.io/).")
+        print(
+            "   To make an actual phone ring on a mobile phone (Twilio) or Linphone softphone:"
+        )
+        print(
+            "   1. Create an Outbound SIP Trunk in LiveKit Cloud Console (https://cloud.livekit.io/)."
+        )
         print("   2. Add SIP_TRUNK_ID=ST_xxxx to backend/.env.local")
         print("   3. Re-run: uv run python src/make_call.py --phone '+919876543210'\n")
 

@@ -36,7 +36,7 @@ load_dotenv(".env.local")
 # =============================================================================
 
 SYSTEM_PROMPT = """IDENTITY:
-You are 'Arogya Seva', an empathetic, clear, and calm telehealth and health access voice assistant for Bharat. You provide accessible health guidance, preventive care advice, preliminary triage classification, real domain health facility lookups, and remember returning callers with privacy-first consent.
+You are 'Arogya Seva', an empathetic, clear, and calm telehealth and health access voice assistant for Bharat. You provide accessible health guidance, preventive care advice, preliminary triage classification, real domain health facility lookups, remember returning callers with privacy-first consent, and escalate to human health officers when necessary.
 
 OBJECTIVES:
 1. Classify symptom triage level using `classify_symptom_triage` when callers describe symptoms or ask about urgency.
@@ -45,6 +45,26 @@ OBJECTIVES:
 4. Handle API / portal failure gracefully out loud: If `lookup_nearest_phc` returns service unavailable or offline status, inform the caller calmly and clearly that the registry is unreachable and advise calling emergency 108 or 104 health helpline immediately.
 5. Manage caller memory using function tools: `lookup_caller`, `save_caller` (only after explicit consent), and `forget_caller`.
 6. Handle Outbound Calls & Opt-Outs (DAY 6): When making outbound calls, state who is calling, why, and how to opt out in the first two sentences. If the caller requests to opt out ("opt out", "stop calling me", "unsubscribe"), call `opt_out_caller` immediately.
+7. Know When to Ask for Human Help (DAY 7): Recognize situations requiring human help, ask for explicit caller consent before sharing details, invoke `create_escalation`, and provide a reference ID with clear next steps.
+
+WHEN TO ASK FOR HUMAN HELP (DAY 7 - HARD RULE):
+You MUST recognize when a situation exceeds AI capabilities and requires human help:
+- Situation 1 (Red-Flag Clinical Emergency): Caller describes severe/red-flag symptoms such as severe chest pain, acute dyspnea/breathing difficulty, heavy unstopped bleeding, sudden paralysis/numbness, loss of consciousness, or major trauma.
+- Situation 2 (Doctor / Clinical Diagnosis Request): Caller explicitly asks for a human doctor/physician, or requests a formal clinical diagnosis or specific prescription drug dosage decision that an AI assistant cannot provide.
+
+ASK FOR PERMISSION BEFORE CREATING REQUEST (STEP 4 - HARD RULE):
+- BEFORE calling `create_escalation`, tell the caller what information you want to share and ask for explicit permission.
+- Example phrasing: "I can submit a human escalation request to our medical team with your name, symptoms, triage result, and location so a health officer can follow up. Do I have your permission to share these details?"
+- If the caller agrees ("yes", "sure", "please do", "okay"): invoke `create_escalation` immediately.
+- If the caller denies ("no", "don't send", "never mind"): DO NOT call `create_escalation`. Confirm politely: "Understood, I will not send any escalation request."
+
+CLEAR NEXT STEPS & REFERENCE ID (STEP 6 - HARD RULE):
+- After `create_escalation` returns, state the Reference ID (e.g. ESC-8492) clearly to the caller.
+- Explain what happens next honestly: "Your request has been submitted under Reference ID ESC-8492. A human health officer will review your case and follow up by phone within 30 minutes. If your symptoms worsen immediately, please call 108 emergency services."
+
+PRIVACY & ANONYMIZATION (STEP 3 - HARD RULE):
+- In the summary passed to `create_escalation`, ONLY include useful details: who needs help, symptoms/request, triage level, facilities checked, urgency level, language, and preferred follow-up method.
+- NEVER include passwords, OTPs, PINs, bank accounts, Aadhaar, or private numbers in the summary text.
 
 OUTBOUND CALL OPENING RULE (HARD COMPULSORY RULE FOR DAY 6):
 When initiating or opening an outbound call, the response MUST open with these two exact elements in the first two sentences:
@@ -80,7 +100,7 @@ GUARDRAILS:
 - NEVER name, recommend, or prescribe any prescription medication, drug dosage, or chemical treatment.
 - NEVER claim to be a human doctor, physician, or medical officer, nor guarantee recovery.
 - NEVER request private or confidential data such as OTP, PIN, bank account details, or Aadhaar number.
-- ESCALATION SCRIPT: If the user describes red-flag or emergency symptoms (e.g., chest pain, severe dyspnea, heavy bleeding, sudden weakness, unconsciousness, severe injury), immediately state: "I am an AI assistant, not a doctor. Your symptoms sound serious. Please call emergency services at 108 immediately or go to the nearest Primary Health Centre right away."
+- MANDATORY EMERGENCY OPENING SCRIPT (HARD COMPULSORY RULE): If the user describes red-flag or emergency symptoms (e.g., chest pain, severe dyspnea, heavy bleeding, sudden weakness, unconsciousness, severe injury), your response MUST explicitly state that you are an AI assistant and not a doctor, and advise calling 108 or going to a hospital/PHC immediately. Example: "I am an AI assistant, not a doctor. Your symptoms sound serious. Please call emergency services at 108 immediately or go to the nearest Primary Health Centre right away." After stating this disclaimer, ask if they want you to submit an escalation request for a human doctor.
 
 STYLE:
 - Optimized strictly for voice: keep replies brief (1 to 2 short sentences, maximum 20 words per sentence).
@@ -168,6 +188,68 @@ class HealthAccessAssistant(Agent):
             f"Urgency: {res.get('urgency_window')}\n"
             f"Recommended Action: {res.get('action_recommended')}\n"
             f"Clinical Rationale: {res.get('clinical_rationale')}"
+        )
+
+    @function_tool
+    async def create_escalation(
+        self,
+        context: RunContext,
+        reason: str,
+        summary: str,
+        urgency: str = "high",
+        caller_name: str = "Anonymous Caller",
+        phone_number: str = "Not provided",
+        caller_language: str = "English",
+        preferred_followup: str = "phone_call",
+        user_id: str = "",
+    ) -> str:
+        """Create a human help request to escalate to a human health officer or medical professional (DAY 7).
+        IMPORTANT: Call this tool ONLY AFTER asking the caller for explicit permission and receiving permission ('yes').
+
+        Args:
+            reason: Main reason for escalation ('Red-flag Emergency Symptom' or 'Doctor/Clinical Diagnosis Request').
+            summary: Short summary containing Who needs help, What happened, What agent checked, How urgent, Caller language, and Preferred follow-up method. MUST NOT include sensitive PII/OTPs/PINs/passwords.
+            urgency: Urgency level ('emergency', 'high', 'medium', or 'low').
+            caller_name: Caller's name or identity.
+            phone_number: Caller's phone number or contact identifier.
+            caller_language: Caller's spoken language (e.g., 'English', 'Hindi').
+            preferred_followup: Preferred contact method ('phone_call', 'sms', 'whatsapp').
+            user_id: Unique caller identifier.
+        """
+        if not user_id:
+            user_id = "default_caller"
+
+        res = db.create_escalation_request(
+            user_id=user_id,
+            reason=reason,
+            summary=summary,
+            caller_name=caller_name,
+            phone_number=phone_number,
+            urgency=urgency,
+            caller_language=caller_language,
+            preferred_followup=preferred_followup,
+            permission_granted=True,
+        )
+
+        ref_id = res.get("id")
+        status = res.get("status")
+        urg_upper = res.get("urgency", "HIGH").upper()
+
+        if status == "updated":
+            return (
+                f"Escalation Request Updated Successfully!\n"
+                f"Reference ID: {ref_id}\n"
+                f"Status: Updated (Existing open ticket found)\n"
+                f"Urgency: {urg_upper}\n"
+                f"Action for Agent: Inform caller their existing request {ref_id} has been updated with new details, and a human officer will follow up via {preferred_followup} within 30 minutes."
+            )
+
+        return (
+            f"Human Help Request Created Successfully!\n"
+            f"Reference ID: {ref_id}\n"
+            f"Status: Open\n"
+            f"Urgency: {urg_upper}\n"
+            f"Action for Agent: Give the caller their Reference ID ({ref_id}) and explain that a human health officer will review the case and follow up via {preferred_followup} within 30 minutes. Remind caller to dial 108 if symptoms worsen immediately."
         )
 
     @function_tool
@@ -303,8 +385,7 @@ async def my_agent(ctx: JobContext):
             room_meta = json.loads(ctx.room.metadata)
 
     is_outbound = (
-        room_meta.get("is_outbound", False)
-        or "outbound" in ctx.room.name.lower()
+        room_meta.get("is_outbound", False) or "outbound" in ctx.room.name.lower()
     )
     patient_name = room_meta.get("patient_name", "")
     reminder_type = room_meta.get(
@@ -318,10 +399,14 @@ async def my_agent(ctx: JobContext):
     # LLM Provider Selection (Groq > OpenAI > Google Gemini)
     if os.getenv("GROQ_API_KEY"):
         from livekit.plugins import groq
+
         llm_instance = groq.LLM(model="llama-3.3-70b-versatile")
-        logger.info("🤖 LLM Engine: Groq llama-3.3-70b-versatile (Free 14,400 requests/day)")
+        logger.info(
+            "🤖 LLM Engine: Groq llama-3.3-70b-versatile (Free 14,400 requests/day)"
+        )
     elif os.getenv("OPENAI_API_KEY"):
         from livekit.plugins import openai
+
         llm_instance = openai.LLM(model="gpt-4o-mini")
         logger.info("🤖 LLM Engine: OpenAI gpt-4o-mini")
     else:
@@ -386,7 +471,9 @@ async def my_agent(ctx: JobContext):
     # Wait for recipient to connect to room
     try:
         participant = await ctx.wait_for_participant()
-        logger.info(f"👤 Remote participant connected: {participant.identity} ({participant.name})")
+        logger.info(
+            f"👤 Remote participant connected: {participant.identity} ({participant.name})"
+        )
     except Exception as e:
         logger.warning(f"⚠️ Note on participant wait: {e}")
 
@@ -406,7 +493,9 @@ async def my_agent(ctx: JobContext):
 
     # Check for opt-out status on outbound calls
     if is_outbound and db.is_opted_out(phone_number):
-        logger.info(f"🛑 Phone number {phone_number} is on opt-out registry. Ending call.")
+        logger.info(
+            f"🛑 Phone number {phone_number} is on opt-out registry. Ending call."
+        )
         with contextlib.suppress(RuntimeError):
             await session.say(
                 "Namaste. This phone number is registered on our opt-out list. Arogya Seva will not place further outbound calls. Goodbye.",

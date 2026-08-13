@@ -1,11 +1,12 @@
 import { useState } from 'react';
 import {
   Heartbeat,
+  Lifebuoy,
   PhoneDisconnect,
   PhoneOutgoing,
   ShieldCheck,
-  Translate,
 } from '@phosphor-icons/react';
+import { EscalationDashboard } from '@/components/app/escalation-dashboard';
 import { OutboundModal } from '@/components/app/outbound-modal';
 import { Button } from '@/components/ui/button';
 
@@ -30,7 +31,7 @@ function CyberOrbIcon({ isCallEnded }: { isCallEnded?: boolean }) {
       />
       {/* Glowing pulsing core */}
       <div
-        className={`relative flex size-16 items-center justify-center rounded-full text-slate-950 shadow-lg ${
+        className={`relative flex size-16 items-center justify-center text-slate-950 shadow-lg ${
           isCallEnded
             ? 'animate-pulse bg-gradient-to-tr from-amber-500 via-orange-400 to-red-500 shadow-[0_0_40px_rgba(245,158,11,0.6)]'
             : 'animate-pulse-glow bg-gradient-to-tr from-emerald-500 via-teal-400 to-cyan-500 shadow-[0_0_40px_rgba(16,185,129,0.6)]'
@@ -61,6 +62,7 @@ export const WelcomeView = ({
   ref,
 }: React.ComponentProps<'div'> & WelcomeViewProps) => {
   const [isOutboundModalOpen, setIsOutboundModalOpen] = useState(false);
+  const [isEscalationDashboardOpen, setIsEscalationDashboardOpen] = useState(false);
 
   return (
     <div ref={ref} className="relative z-10 mx-auto w-full max-w-2xl px-4 py-6 font-sans">
@@ -78,7 +80,7 @@ export const WelcomeView = ({
               SYS.STATUS // {isCallEnded ? 'CALL ENDED (DISCONNECTED)' : 'READY (ONLINE)'}
             </span>
           </div>
-          <div>#VoiceForBharat · DAY 06</div>
+          <div>#VoiceForBharat · DAY 07</div>
           <div className="flex items-center gap-1 text-teal-300">
             <ShieldCheck size={14} weight="fill" />
             <span>MURF FALCON TTS</span>
@@ -93,8 +95,8 @@ export const WelcomeView = ({
           <span className="rounded-md border border-teal-500/30 bg-teal-500/10 px-3 py-1 font-mono text-[11px] font-semibold tracking-wider text-teal-300">
             VOICE: ANISHA (MURF FALCON 2)
           </span>
-          <span className="flex items-center gap-1 rounded-md border border-purple-500/30 bg-purple-500/10 px-2.5 py-1 font-mono text-[11px] font-semibold tracking-wider text-purple-300">
-            <PhoneOutgoing size={14} /> DAY 06: OUTBOUND CALLS
+          <span className="flex items-center gap-1 rounded-md border border-red-500/30 bg-red-500/10 px-2.5 py-1 font-mono text-[11px] font-semibold tracking-wider text-red-300">
+            <Lifebuoy size={14} /> DAY 07: HUMAN HELP & ESCALATION
           </span>
         </div>
 
@@ -111,7 +113,7 @@ export const WelcomeView = ({
             </h1>
             <p className="mb-6 max-w-md font-mono text-xs leading-relaxed text-slate-300 md:text-sm">
               Your health guidance session with Arogya Seva has ended. You can start a new
-              consultation or trigger an outbound call.
+              consultation or view open human escalation requests.
             </p>
           </>
         ) : (
@@ -120,10 +122,10 @@ export const WelcomeView = ({
               [ AGENT STATE: READY ]
             </div>
             <h1 className="mb-2 bg-gradient-to-r from-emerald-400 via-teal-300 to-cyan-400 bg-clip-text font-mono text-3xl font-black tracking-tight text-transparent uppercase md:text-4xl">
-              Arogya Seva // Outbound AI
+              Arogya Seva // Human Help AI
             </h1>
             <p className="mb-6 max-w-md font-mono text-xs leading-relaxed text-slate-300 md:text-sm">
-              Empathetic telehealth & health follow-up voice assistant for Bharat powered by{' '}
+              Telehealth voice assistant with human escalation & consent control powered by{' '}
               <span className="font-semibold text-emerald-300 underline decoration-emerald-500/50">
                 Murf Falcon TTS
               </span>
@@ -140,42 +142,56 @@ export const WelcomeView = ({
             </div>
             <div className="text-xs font-semibold text-slate-200">Murf Falcon 2</div>
           </div>
-          <div className="rounded-lg border border-teal-500/20 bg-slate-950/70 p-2.5">
-            <div className="text-[10px] font-bold tracking-wider text-teal-400 uppercase">
-              OUTBOUND SIP
+          <div className="rounded-lg border border-red-500/20 bg-slate-950/70 p-2.5">
+            <div className="text-[10px] font-bold tracking-wider text-red-400 uppercase">
+              HUMAN HELP
             </div>
-            <div className="text-xs font-semibold text-teal-300">LiveKit / Twilio</div>
+            <div className="text-xs font-semibold text-red-300">Step 4 Consent</div>
           </div>
           <div className="rounded-lg border border-cyan-500/20 bg-slate-950/70 p-2.5">
             <div className="text-[10px] font-bold tracking-wider text-cyan-400 uppercase">
-              GUARDRAIL
+              GUARDRAILS
             </div>
-            <div className="text-xs font-semibold text-emerald-400">Step 4 Compliant</div>
+            <div className="text-xs font-semibold text-emerald-400">PII Anonymized</div>
           </div>
         </div>
 
-        {/* Action Buttons: Inbound vs Outbound */}
-        <div className="flex w-full max-w-lg flex-col gap-3 sm:flex-row">
-          <Button
-            size="lg"
-            onClick={onStartCall}
-            className={`flex-1 rounded-xl py-6 font-mono text-xs font-bold tracking-widest text-slate-950 uppercase shadow-lg transition-all duration-300 hover:scale-105 ${
-              isCallEnded
-                ? 'bg-gradient-to-r from-amber-400 via-emerald-400 to-teal-400 shadow-[0_0_30px_rgba(245,158,11,0.4)]'
-                : 'bg-gradient-to-r from-emerald-400 via-teal-400 to-cyan-400 shadow-[0_0_30px_rgba(16,185,129,0.4)]'
-            }`}
-          >
-            [ {isCallEnded ? 'INBOUND CALL' : startButtonText.toUpperCase()} ]
-          </Button>
+        {/* Action Buttons: Inbound vs Outbound vs Escalation Queue */}
+        <div className="flex w-full max-w-lg flex-col gap-3 font-mono">
+          <div className="flex w-full flex-col gap-3 sm:flex-row">
+            <Button
+              size="lg"
+              onClick={onStartCall}
+              className={`flex-1 rounded-xl py-6 font-mono text-xs font-bold tracking-widest text-slate-950 uppercase shadow-lg transition-all duration-300 hover:scale-105 ${
+                isCallEnded
+                  ? 'bg-gradient-to-r from-amber-400 via-emerald-400 to-teal-400 shadow-[0_0_30px_rgba(245,158,11,0.4)]'
+                  : 'bg-gradient-to-r from-emerald-400 via-teal-400 to-cyan-400 shadow-[0_0_30px_rgba(16,185,129,0.4)]'
+              }`}
+            >
+              [ {isCallEnded ? 'INBOUND CALL' : startButtonText.toUpperCase()} ]
+            </Button>
+
+            <Button
+              size="lg"
+              variant="outline"
+              onClick={() => setIsOutboundModalOpen(true)}
+              className="flex-1 rounded-xl border border-teal-500/50 bg-slate-900/80 py-6 font-mono text-xs font-bold tracking-widest text-teal-300 uppercase shadow-lg transition-all duration-300 hover:scale-105 hover:bg-slate-800 hover:text-teal-200"
+            >
+              <span className="flex items-center justify-center gap-2">
+                <PhoneOutgoing size={18} weight="bold" /> OUTBOUND CALL
+              </span>
+            </Button>
+          </div>
 
           <Button
             size="lg"
             variant="outline"
-            onClick={() => setIsOutboundModalOpen(true)}
-            className="flex-1 rounded-xl border border-teal-500/50 bg-slate-900/80 py-6 font-mono text-xs font-bold tracking-widest text-teal-300 uppercase shadow-lg transition-all duration-300 hover:scale-105 hover:bg-slate-800 hover:text-teal-200"
+            onClick={() => setIsEscalationDashboardOpen(true)}
+            className="w-full rounded-xl border border-red-500/50 bg-red-950/40 py-5 font-mono text-xs font-bold tracking-widest text-red-300 uppercase shadow-lg transition-all duration-300 hover:scale-105 hover:bg-red-900/60 hover:text-red-200"
           >
             <span className="flex items-center justify-center gap-2">
-              <PhoneOutgoing size={18} weight="bold" /> DISPATCH OUTBOUND CALL
+              <Lifebuoy size={18} weight="bold" className="animate-spin-slow text-red-400" />
+              HUMAN ESCALATION DASHBOARD 🚨
             </span>
           </Button>
         </div>
@@ -192,6 +208,12 @@ export const WelcomeView = ({
             onStartCall();
           }
         }}
+      />
+
+      {/* Escalation Dashboard Modal */}
+      <EscalationDashboard
+        isOpen={isEscalationDashboardOpen}
+        onClose={() => setIsEscalationDashboardOpen(false)}
       />
 
       {/* Footer */}
