@@ -154,6 +154,13 @@ class HealthAccessAssistant(Agent):
         name = fac.get("name", "District PHC")
         timestamp = res.get("timestamp")
 
+        call_id = getattr(getattr(context, "session", None), "call_id", "")
+        if call_id:
+            db.mark_call_success(
+                call_id,
+                outcome_summary=f"Looked up nearest facility in {district_or_pincode}",
+            )
+
         return (
             f"Health Facility Data (Source: {res.get('data_source')}, as of {timestamp}):\n"
             f"Facility: {name}\n"
@@ -182,6 +189,15 @@ class HealthAccessAssistant(Agent):
             symptoms=symptoms,
             duration_days=duration_days,
         )
+        t_level = res.get("triage_level", "GREEN")
+        call_id = getattr(getattr(context, "session", None), "call_id", "")
+        if call_id:
+            db.mark_call_success(
+                call_id,
+                outcome_summary=f"Symptom triage completed ({t_level})",
+                triage_level=t_level,
+            )
+
         return (
             f"Triage Assessment Result (Guideline Source: {res.get('guideline_source')}, evaluated on {res.get('timestamp')}):\n"
             f"Triage Level: {res.get('triage_level')}\n"
@@ -235,6 +251,14 @@ class HealthAccessAssistant(Agent):
         status = res.get("status")
         urg_upper = res.get("urgency", "HIGH").upper()
 
+        call_id = getattr(getattr(context, "session", None), "call_id", "")
+        if call_id:
+            db.mark_call_success(
+                call_id,
+                outcome_summary=f"Human escalation request created ({ref_id})",
+                escalation_created=1,
+            )
+
         if status == "updated":
             return (
                 f"Escalation Request Updated Successfully!\n"
@@ -264,6 +288,13 @@ class HealthAccessAssistant(Agent):
         caller = db.get_caller(user_id)
         if not caller:
             return f"No record found for caller '{user_id}'."
+
+        call_id = getattr(getattr(context, "session", None), "call_id", "")
+        if call_id:
+            db.mark_call_success(
+                call_id, outcome_summary=f"Retrieved caller facts for {caller['name']}"
+            )
+
         return (
             f"Caller Record Found:\n"
             f"Name: {caller['name']}\n"
@@ -311,6 +342,13 @@ class HealthAccessAssistant(Agent):
             language_preference=language_preference,
             facts=facts,
         )
+
+        call_id = getattr(getattr(context, "session", None), "call_id", "")
+        if call_id:
+            db.mark_call_success(
+                call_id, outcome_summary=f"Caller memory & consent saved for {name}"
+            )
+
         return f"Successfully saved memory for {name} (ID: {user_id})."
 
     @function_tool
@@ -323,6 +361,11 @@ class HealthAccessAssistant(Agent):
         if not user_id:
             user_id = "default_caller"
         success = db.delete_caller(user_id)
+        call_id = getattr(getattr(context, "session", None), "call_id", "")
+        if call_id and success:
+            db.mark_call_success(
+                call_id, outcome_summary=f"Caller memory deleted for {user_id}"
+            )
         if success:
             return f"Successfully deleted memory for caller ID '{user_id}'."
         return f"No memory record was found to delete for caller ID '{user_id}'."
@@ -344,6 +387,11 @@ class HealthAccessAssistant(Agent):
         if not phone_number:
             phone_number = "default_caller"
         db.register_opt_out(phone_number, reason=reason)
+        call_id = getattr(getattr(context, "session", None), "call_id", "")
+        if call_id:
+            db.mark_call_success(
+                call_id, outcome_summary=f"Opt-out registered for {phone_number}"
+            )
         return f"Successfully registered opt-out for '{phone_number}'. No further outbound calls will be made."
 
 
@@ -391,9 +439,10 @@ async def my_agent(ctx: JobContext):
     reminder_type = room_meta.get(
         "reminder_type", "scheduled medication follow-up and vaccination reminder"
     )
-    call_id = room_meta.get("call_id", "")
-
-    # Tracking latency from end-of-user-speech to first audio output
+    call_id = room_meta.get("call_id") or f"CALL-{ctx.room.name}"
+    start_timestamp = time.time()
+    first_latency_ms = [0.0]
+    user_speech_count = [0]
     last_user_speech_end_time = [None]
 
     # LLM Provider Selection (Groq > OpenAI > Google Gemini)
@@ -429,10 +478,12 @@ async def my_agent(ctx: JobContext):
         vad=ctx.proc.userdata["vad"],
         preemptive_generation=True,
     )
+    session.call_id = call_id
 
     # Event handlers for Latency Logging
     @session.on("user_speech_committed")
     def _on_user_speech_committed(msg):
+        user_speech_count[0] += 1
         last_user_speech_end_time[0] = time.perf_counter()
         logger.info("🎙️ User speech finished. Sent to LLM & Murf Falcon TTS...")
 
@@ -440,6 +491,8 @@ async def my_agent(ctx: JobContext):
     def _on_agent_speech_started():
         if last_user_speech_end_time[0] is not None:
             latency_ms = (time.perf_counter() - last_user_speech_end_time[0]) * 1000
+            if first_latency_ms[0] == 0.0:
+                first_latency_ms[0] = round(latency_ms, 1)
             logger.info(
                 f"⚡ [LATENCY LOG] End-of-user-speech to first audio output: {latency_ms:.2f} ms"
             )
@@ -449,86 +502,157 @@ async def my_agent(ctx: JobContext):
     def _on_metrics_collected(metrics):
         logger.info(f"📊 [SESSION METRICS] {metrics}")
 
-    # Start session event listeners on room
-    await session.start(
-        agent=HealthAccessAssistant(),
-        room=ctx.room,
-        room_options=room_io.RoomOptions(
-            audio_input=room_io.AudioInputOptions(
-                noise_cancellation=lambda params: (
-                    noise_cancellation.BVCTelephony()
-                    if params.participant.kind
-                    == rtc.ParticipantKind.PARTICIPANT_KIND_SIP
-                    else noise_cancellation.BVC()
+    try:
+        # Start session event listeners on room
+        await session.start(
+            agent=HealthAccessAssistant(),
+            room=ctx.room,
+            room_options=room_io.RoomOptions(
+                audio_input=room_io.AudioInputOptions(
+                    noise_cancellation=lambda params: (
+                        noise_cancellation.BVCTelephony()
+                        if params.participant.kind
+                        == rtc.ParticipantKind.PARTICIPANT_KIND_SIP
+                        else noise_cancellation.BVC()
+                    ),
                 ),
             ),
-        ),
-    )
-
-    # Connect worker to LiveKit room
-    await ctx.connect()
-
-    # Wait for recipient to connect to room
-    try:
-        participant = await ctx.wait_for_participant()
-        logger.info(
-            f"👤 Remote participant connected: {participant.identity} ({participant.name})"
         )
-    except Exception as e:
-        logger.warning(f"⚠️ Note on participant wait: {e}")
 
-    # For outbound calls, pause 1 second to allow SIP audio channel on softphone/phone to stabilize
-    if is_outbound:
-        await asyncio.sleep(1.0)
+        # Connect worker to LiveKit room
+        await ctx.connect()
 
-    # Determine caller user_id from connected room participants
-    user_id = "default_caller"
-    for participant in ctx.room.remote_participants.values():
-        if participant.identity:
-            user_id = participant.identity
-            break
-
-    caller_profile = db.get_caller(user_id)
-    phone_number = room_meta.get("phone_number", user_id)
-
-    # Check for opt-out status on outbound calls
-    if is_outbound and db.is_opted_out(phone_number):
-        logger.info(
-            f"🛑 Phone number {phone_number} is on opt-out registry. Ending call."
+        # Determine channel type
+        is_sip_inbound = any(
+            p.kind == rtc.ParticipantKind.PARTICIPANT_KIND_SIP
+            for p in ctx.room.remote_participants.values()
         )
+        channel_type = (
+            "sip_outbound"
+            if is_outbound
+            else ("sip_inbound" if is_sip_inbound else "browser")
+        )
+
+        # Determine caller user_id from connected room participants
+        user_id = "default_caller"
+        for participant in ctx.room.remote_participants.values():
+            if participant.identity:
+                user_id = participant.identity
+                break
+
+        phone_number = room_meta.get("phone_number", user_id)
+        db.log_call_start(call_id, channel=channel_type, phone_number=phone_number)
+
+        # Wait for recipient to connect to room
+        try:
+            participant = await ctx.wait_for_participant()
+            logger.info(
+                f"👤 Remote participant connected: {participant.identity} ({participant.name})"
+            )
+        except Exception as e:
+            logger.warning(f"⚠️ Note on participant wait: {e}")
+
+        # For outbound calls, pause 1 second to allow SIP audio channel on softphone/phone to stabilize
+        if is_outbound:
+            await asyncio.sleep(1.0)
+
+        caller_profile = db.get_caller(user_id)
+
+        # Check for opt-out status on outbound calls
+        if is_outbound and db.is_opted_out(phone_number):
+            logger.info(
+                f"🛑 Phone number {phone_number} is on opt-out registry. Ending call."
+            )
+            with contextlib.suppress(RuntimeError):
+                await session.say(
+                    "Namaste. This phone number is registered on our opt-out list. Arogya Seva will not place further outbound calls. Goodbye.",
+                    allow_interruptions=False,
+                )
+            if call_id:
+                db.update_call_outcome(call_id, outcome="opt_out")
+                db.log_call_end(
+                    call_id=call_id,
+                    status="successful",
+                    failure_category="none",
+                    outcome_summary="Opt-out registry check passed & call ended gracefully",
+                    duration_seconds=int(time.time() - start_timestamp),
+                    latency_ms=first_latency_ms[0],
+                )
+            return
+
+        # Determine dynamic opening speech
+        if is_outbound:
+            # STEP 4 COMPLIANCE: Must open with: (1) Who is calling & why, (2) How to opt out
+            greeting_text = (
+                f"Namaste {patient_name if patient_name else ''}, this is Arogya Seva calling from your District Health Centre regarding your {reminder_type}. "
+                f"If you wish to stop receiving these outbound health reminders at any time, please say 'opt out' or press 9 to unsubscribe."
+            )
+        elif caller_profile:
+            name = caller_profile["name"]
+            last_outcome = caller_profile["facts"].get(
+                "last_triage_outcome", "our previous health consultation"
+            )
+            greeting_text = (
+                f"Namaste {name}, welcome back to Arogya Seva! Last time we spoke about {last_outcome}. "
+                f"How are you feeling today?"
+            )
+        else:
+            greeting_text = "Namaste! I am Arogya Seva, your health guidance assistant. How can I help you with your health today?"
+
         with contextlib.suppress(RuntimeError):
             await session.say(
-                "Namaste. This phone number is registered on our opt-out list. Arogya Seva will not place further outbound calls. Goodbye.",
-                allow_interruptions=False,
+                greeting_text,
+                allow_interruptions=True,
             )
-        if call_id:
-            db.update_call_outcome(call_id, outcome="opt_out")
-        return
 
-    # Determine dynamic opening speech
-    if is_outbound:
-        # STEP 4 COMPLIANCE: Must open with: (1) Who is calling & why, (2) How to opt out
-        greeting_text = (
-            f"Namaste {patient_name if patient_name else ''}, this is Arogya Seva calling from your District Health Centre regarding your {reminder_type}. "
-            f"If you wish to stop receiving these outbound health reminders at any time, please say 'opt out' or press 9 to unsubscribe."
-        )
-    elif caller_profile:
-        name = caller_profile["name"]
-        last_outcome = caller_profile["facts"].get(
-            "last_triage_outcome", "our previous health consultation"
-        )
-        greeting_text = (
-            f"Namaste {name}, welcome back to Arogya Seva! Last time we spoke about {last_outcome}. "
-            f"How are you feeling today?"
-        )
-    else:
-        greeting_text = "Namaste! I am Arogya Seva, your health guidance assistant. How can I help you with your health today?"
+    finally:
+        duration_sec = int(time.time() - start_timestamp)
+        analytics = db.get_analytics_summary()
+        recent = [
+            c for c in analytics.get("recent_calls", []) if c.get("call_id") == call_id
+        ]
+        current_status = recent[0].get("status") if recent else "failed"
 
-    with contextlib.suppress(RuntimeError):
-        await session.say(
-            greeting_text,
-            allow_interruptions=True,
-        )
+        if current_status == "successful":
+            db.log_call_end(
+                call_id=call_id,
+                status="successful",
+                failure_category="none",
+                outcome_summary=recent[0].get(
+                    "outcome_summary", "Health consultation completed"
+                ),
+                duration_seconds=duration_sec,
+                latency_ms=first_latency_ms[0],
+                triage_level=recent[0].get("triage_level", "none"),
+                escalation_created=recent[0].get("escalation_created", 0),
+            )
+        elif user_speech_count[0] > 0 and duration_sec >= 8:
+            db.log_call_end(
+                call_id=call_id,
+                status="successful",
+                failure_category="none",
+                outcome_summary="Caller health guidance consultation completed",
+                duration_seconds=duration_sec,
+                latency_ms=first_latency_ms[0],
+            )
+        elif duration_sec < 5 and user_speech_count[0] == 0:
+            db.log_call_end(
+                call_id=call_id,
+                status="failed",
+                failure_category="user_hangup",
+                outcome_summary="Caller disconnected immediately (< 5s)",
+                duration_seconds=duration_sec,
+                latency_ms=first_latency_ms[0],
+            )
+        else:
+            db.log_call_end(
+                call_id=call_id,
+                status="failed",
+                failure_category="incomplete_task",
+                outcome_summary="Consultation ended before completing triage or enquiry",
+                duration_seconds=duration_sec,
+                latency_ms=first_latency_ms[0],
+            )
 
 
 if __name__ == "__main__":

@@ -76,6 +76,25 @@ def init_db() -> None:
             );
             """
         )
+        cursor.execute(
+            """
+            CREATE TABLE IF NOT EXISTS call_analytics (
+                call_id TEXT PRIMARY KEY,
+                channel TEXT DEFAULT 'browser',
+                phone_number TEXT DEFAULT 'default_caller',
+                start_time TEXT NOT NULL,
+                end_time TEXT,
+                duration_seconds INTEGER DEFAULT 0,
+                status TEXT NOT NULL,
+                failure_category TEXT DEFAULT 'none',
+                outcome_summary TEXT DEFAULT '',
+                triage_level TEXT DEFAULT 'none',
+                escalation_created INTEGER DEFAULT 0,
+                first_response_latency_ms REAL DEFAULT 0.0,
+                created_at TEXT NOT NULL
+            );
+            """
+        )
         conn.commit()
     logger.info(f"Database initialized at {DB_PATH}")
 
@@ -434,3 +453,281 @@ def update_escalation_status(request_id: str, status: str) -> bool:
         )
         conn.commit()
         return cursor.rowcount > 0
+
+
+# =============================================================================
+# CALL ANALYTICS & METRICS FUNCTIONS (DAY 8)
+# =============================================================================
+
+
+def log_call_start(
+    call_id: str,
+    channel: str = "browser",
+    phone_number: str = "default_caller",
+) -> dict[str, Any]:
+    """Record initial call connection in SQLite analytics table."""
+    init_db()
+    now_iso = datetime.now(timezone.utc).isoformat()
+    with get_connection() as conn:
+        cursor = conn.cursor()
+        cursor.execute(
+            """
+            INSERT INTO call_analytics (
+                call_id, channel, phone_number, start_time, status,
+                failure_category, outcome_summary, created_at
+            ) VALUES (?, ?, ?, ?, 'in_progress', 'none', 'Call connected', ?)
+            ON CONFLICT(call_id) DO UPDATE SET
+                channel = excluded.channel,
+                phone_number = excluded.phone_number,
+                start_time = excluded.start_time;
+            """,
+            (call_id, channel, phone_number, now_iso, now_iso),
+        )
+        conn.commit()
+    logger.info(f"Logged call start: {call_id} ({channel})")
+    return {"call_id": call_id, "channel": channel, "start_time": now_iso}
+
+
+def log_call_end(
+    call_id: str,
+    status: str = "failed",
+    failure_category: str = "user_hangup",
+    outcome_summary: str = "Consultation incomplete",
+    duration_seconds: int = 0,
+    latency_ms: float = 0.0,
+    triage_level: str = "none",
+    escalation_created: int = 0,
+) -> bool:
+    """Record call outcome, duration, status (successful/failed), and metrics on call end."""
+    init_db()
+    now_iso = datetime.now(timezone.utc).isoformat()
+    clean_summary = sanitize_summary(outcome_summary)
+    valid_statuses = {"successful", "failed", "in_progress"}
+    status_clean = status if status in valid_statuses else "failed"
+
+    with get_connection() as conn:
+        cursor = conn.cursor()
+        cursor.execute(
+            """
+            UPDATE call_analytics
+            SET end_time = ?,
+                duration_seconds = ?,
+                status = ?,
+                failure_category = ?,
+                outcome_summary = ?,
+                triage_level = ?,
+                escalation_created = ?,
+                first_response_latency_ms = ?
+            WHERE call_id = ?;
+            """,
+            (
+                now_iso,
+                duration_seconds,
+                status_clean,
+                failure_category,
+                clean_summary,
+                triage_level,
+                escalation_created,
+                latency_ms,
+                call_id,
+            ),
+        )
+        conn.commit()
+        updated = cursor.rowcount > 0
+
+    if not updated:
+        # Fallback insert if start wasn't logged explicitly
+        with get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute(
+                """
+                INSERT INTO call_analytics (
+                    call_id, channel, phone_number, start_time, end_time,
+                    duration_seconds, status, failure_category, outcome_summary,
+                    triage_level, escalation_created, first_response_latency_ms, created_at
+                ) VALUES (?, 'browser', 'default_caller', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
+                """,
+                (
+                    call_id,
+                    now_iso,
+                    now_iso,
+                    duration_seconds,
+                    status_clean,
+                    failure_category,
+                    clean_summary,
+                    triage_level,
+                    escalation_created,
+                    latency_ms,
+                    now_iso,
+                ),
+            )
+            conn.commit()
+
+    logger.info(
+        f"Logged call end for {call_id}: status={status_clean}, duration={duration_seconds}s, failure={failure_category}"
+    )
+    return True
+
+
+def mark_call_success(
+    call_id: str,
+    outcome_summary: str,
+    triage_level: str = "none",
+    escalation_created: int = 0,
+) -> bool:
+    """Mark an active call as successful upon completing a key objective (triage, PHC lookup, escalation, opt-out, or consent save)."""
+    init_db()
+    clean_summary = sanitize_summary(outcome_summary)
+    with get_connection() as conn:
+        cursor = conn.cursor()
+        cursor.execute(
+            """
+            UPDATE call_analytics
+            SET status = 'successful',
+                failure_category = 'none',
+                outcome_summary = CASE
+                    WHEN outcome_summary = 'Call connected' OR outcome_summary = 'Consultation incomplete' THEN ?
+                    ELSE outcome_summary || ' | ' || ?
+                END,
+                triage_level = CASE WHEN ? != 'none' THEN ? ELSE triage_level END,
+                escalation_created = CASE WHEN ? = 1 THEN 1 ELSE escalation_created END
+            WHERE call_id = ?;
+            """,
+            (
+                clean_summary,
+                clean_summary,
+                triage_level,
+                triage_level,
+                escalation_created,
+                call_id,
+            ),
+        )
+        conn.commit()
+        return cursor.rowcount > 0
+
+
+def get_analytics_summary(
+    channel_filter: Optional[str] = None,
+) -> dict[str, Any]:
+    """Retrieve aggregated call analytics metrics for the Day 8 Dashboard."""
+    init_db()
+    with get_connection() as conn:
+        cursor = conn.cursor()
+
+        # Query total, successful, failed counts
+        if channel_filter and channel_filter.lower() != "all":
+            cursor.execute(
+                """
+                SELECT
+                    COUNT(*) as total_calls,
+                    SUM(CASE WHEN status = 'successful' THEN 1 ELSE 0 END) as successful_calls,
+                    SUM(CASE WHEN status = 'failed' THEN 1 ELSE 0 END) as failed_calls,
+                    AVG(CASE WHEN first_response_latency_ms > 0 THEN first_response_latency_ms ELSE NULL END) as avg_latency,
+                    SUM(CASE WHEN escalation_created = 1 THEN 1 ELSE 0 END) as total_escalations
+                FROM call_analytics
+                WHERE channel = ?;
+                """,
+                (channel_filter.lower(),),
+            )
+        else:
+            cursor.execute(
+                """
+                SELECT
+                    COUNT(*) as total_calls,
+                    SUM(CASE WHEN status = 'successful' THEN 1 ELSE 0 END) as successful_calls,
+                    SUM(CASE WHEN status = 'failed' THEN 1 ELSE 0 END) as failed_calls,
+                    AVG(CASE WHEN first_response_latency_ms > 0 THEN first_response_latency_ms ELSE NULL END) as avg_latency,
+                    SUM(CASE WHEN escalation_created = 1 THEN 1 ELSE 0 END) as total_escalations
+                FROM call_analytics;
+                """
+            )
+        counts = cursor.fetchone()
+
+        total_calls = counts["total_calls"] or 0
+        successful_calls = counts["successful_calls"] or 0
+        failed_calls = counts["failed_calls"] or 0
+        avg_latency_ms = round(counts["avg_latency"] or 0.0, 1)
+        total_escalations = counts["total_escalations"] or 0
+
+        success_rate = (
+            round((successful_calls / total_calls) * 100, 1) if total_calls > 0 else 0.0
+        )
+
+        # Failure categories breakdown
+        cursor.execute(
+            """
+            SELECT failure_category, COUNT(*) as count
+            FROM call_analytics
+            WHERE status = 'failed' AND failure_category != 'none'
+            GROUP BY failure_category;
+            """
+        )
+        failure_rows = cursor.fetchall()
+        failure_breakdown = {
+            row["failure_category"]: row["count"] for row in failure_rows
+        }
+
+        # Fetch recent 20 call logs for call history table
+        cursor.execute(
+            """
+            SELECT call_id, channel, phone_number, start_time, duration_seconds,
+                   status, failure_category, outcome_summary, triage_level,
+                   escalation_created, first_response_latency_ms, created_at
+            FROM call_analytics
+            ORDER BY created_at DESC
+            LIMIT 20;
+            """
+        )
+        recent_rows = cursor.fetchall()
+        recent_calls = [dict(row) for row in recent_rows]
+
+    return {
+        "definition_of_success": (
+            "A call is marked SUCCESSFUL when the caller receives safe health guidance, "
+            "completes a symptom triage assessment, looks up health facilities, "
+            "creates a human escalation request, or manages caller memory/opt-out preferences."
+        ),
+        "total_calls": total_calls,
+        "successful_calls": successful_calls,
+        "failed_calls": failed_calls,
+        "success_rate_percent": success_rate,
+        "avg_latency_ms": avg_latency_ms,
+        "total_escalations": total_escalations,
+        "failure_breakdown": failure_breakdown,
+        "recent_calls": recent_calls,
+    }
+
+
+def log_simulated_call(
+    status: str = "successful",
+    failure_category: str = "none",
+    outcome_summary: str = "Simulated triage assessment completed",
+    channel: str = "browser",
+    duration_seconds: int = 35,
+    latency_ms: float = 430.0,
+) -> dict[str, Any]:
+    """Helper for testing success and failure paths on the Day 8 dashboard."""
+    import random
+
+    init_db()
+    rand_id = f"TEST-CALL-{random.randint(1000, 9999)}"
+    now_iso = datetime.now(timezone.utc).isoformat()
+
+    log_call_start(rand_id, channel=channel, phone_number="test_caller")
+    log_call_end(
+        rand_id,
+        status=status,
+        failure_category=failure_category,
+        outcome_summary=outcome_summary,
+        duration_seconds=duration_seconds,
+        latency_ms=latency_ms,
+        triage_level="GREEN" if status == "successful" else "none",
+        escalation_created=1 if "escalation" in outcome_summary.lower() else 0,
+    )
+    return {
+        "call_id": rand_id,
+        "status": status,
+        "failure_category": failure_category,
+        "outcome_summary": outcome_summary,
+        "timestamp": now_iso,
+    }

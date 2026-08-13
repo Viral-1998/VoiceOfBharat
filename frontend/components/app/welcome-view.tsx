@@ -1,11 +1,13 @@
 import { useState } from 'react';
 import {
+  ChartBar,
   Heartbeat,
   Lifebuoy,
   PhoneDisconnect,
   PhoneOutgoing,
   ShieldCheck,
 } from '@phosphor-icons/react';
+import { AnalyticsDashboard } from '@/components/app/analytics-dashboard';
 import { EscalationDashboard } from '@/components/app/escalation-dashboard';
 import { OutboundModal } from '@/components/app/outbound-modal';
 import { Button } from '@/components/ui/button';
@@ -63,6 +65,7 @@ export const WelcomeView = ({
 }: React.ComponentProps<'div'> & WelcomeViewProps) => {
   const [isOutboundModalOpen, setIsOutboundModalOpen] = useState(false);
   const [isEscalationDashboardOpen, setIsEscalationDashboardOpen] = useState(false);
+  const [isAnalyticsDashboardOpen, setIsAnalyticsDashboardOpen] = useState(false);
 
   return (
     <div ref={ref} className="relative z-10 mx-auto w-full max-w-2xl px-4 py-6 font-sans">
@@ -80,7 +83,7 @@ export const WelcomeView = ({
               SYS.STATUS // {isCallEnded ? 'CALL ENDED (DISCONNECTED)' : 'READY (ONLINE)'}
             </span>
           </div>
-          <div>#VoiceForBharat · DAY 07</div>
+          <div>#VoiceForBharat · DAY 08</div>
           <div className="flex items-center gap-1 text-teal-300">
             <ShieldCheck size={14} weight="fill" />
             <span>MURF FALCON TTS</span>
@@ -93,10 +96,10 @@ export const WelcomeView = ({
             TRACK: HEALTH ACCESS
           </span>
           <span className="rounded-md border border-teal-500/30 bg-teal-500/10 px-3 py-1 font-mono text-[11px] font-semibold tracking-wider text-teal-300">
-            VOICE: ANISHA (MURF FALCON 2)
+            VOICE: ANISHA (MURF FALCON)
           </span>
-          <span className="flex items-center gap-1 rounded-md border border-red-500/30 bg-red-500/10 px-2.5 py-1 font-mono text-[11px] font-semibold tracking-wider text-red-300">
-            <Lifebuoy size={14} /> DAY 07: HUMAN HELP & ESCALATION
+          <span className="flex items-center gap-1 rounded-md border border-cyan-500/30 bg-cyan-500/10 px-2.5 py-1 font-mono text-[11px] font-semibold tracking-wider text-cyan-300">
+            <ChartBar size={14} weight="bold" /> DAY 08: CALL ANALYTICS
           </span>
         </div>
 
@@ -112,8 +115,8 @@ export const WelcomeView = ({
               Consultation Complete
             </h1>
             <p className="mb-6 max-w-md font-mono text-xs leading-relaxed text-slate-300 md:text-sm">
-              Your health guidance session with Arogya Seva has ended. You can start a new
-              consultation or view open human escalation requests.
+              Your health guidance session with Arogya Seva has ended. View real call analytics or
+              start a new call.
             </p>
           </>
         ) : (
@@ -122,10 +125,10 @@ export const WelcomeView = ({
               [ AGENT STATE: READY ]
             </div>
             <h1 className="mb-2 bg-gradient-to-r from-emerald-400 via-teal-300 to-cyan-400 bg-clip-text font-mono text-3xl font-black tracking-tight text-transparent uppercase md:text-4xl">
-              Arogya Seva // Human Help AI
+              Arogya Seva // Analytics AI
             </h1>
             <p className="mb-6 max-w-md font-mono text-xs leading-relaxed text-slate-300 md:text-sm">
-              Telehealth voice assistant with human escalation & consent control powered by{' '}
+              Telehealth voice assistant with real call analytics & metrics powered by{' '}
               <span className="font-semibold text-emerald-300 underline decoration-emerald-500/50">
                 Murf Falcon TTS
               </span>
@@ -142,21 +145,21 @@ export const WelcomeView = ({
             </div>
             <div className="text-xs font-semibold text-slate-200">Murf Falcon 2</div>
           </div>
-          <div className="rounded-lg border border-red-500/20 bg-slate-950/70 p-2.5">
-            <div className="text-[10px] font-bold tracking-wider text-red-400 uppercase">
-              HUMAN HELP
-            </div>
-            <div className="text-xs font-semibold text-red-300">Step 4 Consent</div>
-          </div>
           <div className="rounded-lg border border-cyan-500/20 bg-slate-950/70 p-2.5">
             <div className="text-[10px] font-bold tracking-wider text-cyan-400 uppercase">
+              CALL ANALYTICS
+            </div>
+            <div className="text-xs font-semibold text-cyan-300">SQLite + Real Data</div>
+          </div>
+          <div className="rounded-lg border border-teal-500/20 bg-slate-950/70 p-2.5">
+            <div className="text-[10px] font-bold tracking-wider text-teal-400 uppercase">
               GUARDRAILS
             </div>
-            <div className="text-xs font-semibold text-emerald-400">PII Anonymized</div>
+            <div className="font-mono text-xs font-semibold text-emerald-400">PII Anonymized</div>
           </div>
         </div>
 
-        {/* Action Buttons: Inbound vs Outbound vs Escalation Queue */}
+        {/* Action Buttons */}
         <div className="flex w-full max-w-lg flex-col gap-3 font-mono">
           <div className="flex w-full flex-col gap-3 sm:flex-row">
             <Button
@@ -183,17 +186,31 @@ export const WelcomeView = ({
             </Button>
           </div>
 
-          <Button
-            size="lg"
-            variant="outline"
-            onClick={() => setIsEscalationDashboardOpen(true)}
-            className="w-full rounded-xl border border-red-500/50 bg-red-950/40 py-5 font-mono text-xs font-bold tracking-widest text-red-300 uppercase shadow-lg transition-all duration-300 hover:scale-105 hover:bg-red-900/60 hover:text-red-200"
-          >
-            <span className="flex items-center justify-center gap-2">
-              <Lifebuoy size={18} weight="bold" className="animate-spin-slow text-red-400" />
-              HUMAN ESCALATION DASHBOARD 🚨
-            </span>
-          </Button>
+          <div className="flex w-full flex-col gap-3 sm:flex-row">
+            <Button
+              size="lg"
+              variant="outline"
+              onClick={() => setIsAnalyticsDashboardOpen(true)}
+              className="flex-1 rounded-xl border border-cyan-500/60 bg-gradient-to-r from-cyan-950/60 to-slate-900/90 py-5 font-mono text-xs font-bold tracking-widest text-cyan-300 uppercase shadow-lg shadow-cyan-950/50 transition-all duration-300 hover:scale-105 hover:bg-cyan-900/50 hover:text-cyan-200"
+            >
+              <span className="flex items-center justify-center gap-2">
+                <ChartBar size={18} weight="bold" className="text-cyan-400" />
+                CALL ANALYTICS DASHBOARD 📊
+              </span>
+            </Button>
+
+            <Button
+              size="lg"
+              variant="outline"
+              onClick={() => setIsEscalationDashboardOpen(true)}
+              className="flex-1 rounded-xl border border-red-500/50 bg-red-950/40 py-5 font-mono text-xs font-bold tracking-widest text-red-300 uppercase shadow-lg transition-all duration-300 hover:scale-105 hover:bg-red-900/60 hover:text-red-200"
+            >
+              <span className="flex items-center justify-center gap-2">
+                <Lifebuoy size={18} weight="bold" className="text-red-400" />
+                HUMAN ESCALATION 🚨
+              </span>
+            </Button>
+          </div>
         </div>
       </section>
 
@@ -214,6 +231,12 @@ export const WelcomeView = ({
       <EscalationDashboard
         isOpen={isEscalationDashboardOpen}
         onClose={() => setIsEscalationDashboardOpen(false)}
+      />
+
+      {/* Day 8 Call Analytics Dashboard Modal */}
+      <AnalyticsDashboard
+        isOpen={isAnalyticsDashboardOpen}
+        onClose={() => setIsAnalyticsDashboardOpen(false)}
       />
 
       {/* Footer */}
