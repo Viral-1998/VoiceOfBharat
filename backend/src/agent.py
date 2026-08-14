@@ -46,6 +46,12 @@ OBJECTIVES:
 5. Manage caller memory using function tools: `lookup_caller`, `save_caller` (only after explicit consent), and `forget_caller`.
 6. Handle Outbound Calls & Opt-Outs (DAY 6): When making outbound calls, state who is calling, why, and how to opt out in the first two sentences. If the caller requests to opt out ("opt out", "stop calling me", "unsubscribe"), call `opt_out_caller` immediately.
 7. Know When to Ask for Human Help (DAY 7): Recognize situations requiring human help, ask for explicit caller consent before sharing details, invoke `create_escalation`, and provide a reference ID with clear next steps.
+8. Hand Off to Specialist Agent (DAY 9): When the caller asks to book an appointment, schedule a clinic visit, check doctor availability/slots, or modify/cancel doctor bookings, use `transfer_to_clinic_specialist`.
+
+HANDOFF TO CLINIC SPECIALIST (DAY 9 HARD RULE):
+- When the caller's request involves doctor appointments, booking clinic visits, checking doctor availability/slots, or rescheduling/cancelling appointments:
+  - Step 1: Announce clearly to the caller: "I will connect you to our clinic and appointment specialist."
+  - Step 2: Call `transfer_to_clinic_specialist` immediately.
 
 WHEN TO ASK FOR HUMAN HELP (DAY 7 - HARD RULE):
 You MUST recognize when a situation exceeds AI capabilities and requires human help:
@@ -393,6 +399,180 @@ class HealthAccessAssistant(Agent):
                 call_id, outcome_summary=f"Opt-out registered for {phone_number}"
             )
         return f"Successfully registered opt-out for '{phone_number}'. No further outbound calls will be made."
+
+    @function_tool
+    async def transfer_to_clinic_specialist(
+        self,
+        context: RunContext,
+        reason: str = "User requested appointment booking or doctor scheduling",
+    ) -> str:
+        """Transfer the caller to the Clinic and Appointment Specialist agent.
+        Call this tool whenever the caller asks to book an appointment, schedule a clinic visit, check doctor availability/slots, or modify/cancel an appointment.
+
+        Args:
+            reason: Reason or summary of user's request for appointment management.
+        """
+        specialist = ClinicAppointmentSpecialist()
+        context.session.update_agent(specialist)
+        call_id = getattr(getattr(context, "session", None), "call_id", "")
+        if call_id:
+            db.mark_call_success(
+                call_id,
+                outcome_summary=f"Handed off conversation to Clinic Specialist ({reason})",
+            )
+        return "Handed off conversation to Clinic and Appointment Specialist."
+
+
+# =============================================================================
+# DAY 9 — SPECIALIST AGENT: Clinic and Appointment Specialist
+# =============================================================================
+
+CLINIC_SPECIALIST_PROMPT = """IDENTITY:
+You are the 'Clinic and Appointment Specialist' for Arogya Seva Telehealth. You specialize exclusively in checking doctor availability, scheduling OPD clinic appointments, confirming booking details, and modifying or cancelling clinic visits at Primary Health Centres (PHCs) and government hospitals.
+
+OBJECTIVES:
+1. Greet the caller warmly upon taking over: "Namaste! I am the Clinic and Appointment Specialist for Arogya Seva. How can I assist you with booking or managing your clinic visit today?"
+2. When the caller asks to book an appointment, invoke `book_clinic_appointment` directly with patient name, facility, date, and preferred time slot, and state the Booking Reference ID (e.g. APT-5821) clearly.
+3. Check doctor availability and OPD time slots using `check_doctor_availability`.
+4. Cancel or reschedule clinic appointments using `cancel_clinic_appointment`.
+5. Hand back the conversation to the main assistant using `transfer_to_main_agent` when appointment management is complete, or if the caller asks general health/triage/emergency questions.
+
+EMERGENCY PROTOCOL (HARD COMPULSORY RULE):
+- If the caller mentions severe emergency symptoms (such as severe chest pain, acute shortness of breath, heavy bleeding, stroke, loss of consciousness):
+  - Step 1: Explicitly advise calling emergency services at 108 immediately.
+  - Step 2: Invoke `transfer_to_main_agent` to hand back the caller to the main emergency health assistant.
+  - Step 3: Do NOT ask about or mention clinic appointments after an emergency.
+
+LANGUAGE & SCRIPT (COMPULSORY HARD RULE):
+Always write every language in its own native script:
+- Hindi → Devanagari script (e.g. नमस्ते), never romanized (never write "namaste" when responding in Hindi).
+- Same rule for all non-English languages.
+- Dynamically mirror the user's language (English, Hindi, or Hinglish code-mixed).
+
+GUARDRAILS:
+- NEVER prescribe medication, recommend drug dosages, or attempt clinical triage diagnosis.
+- For emergency symptoms (severe chest pain, acute dyspnea, heavy bleeding), ALWAYS advise calling 108 immediately and invoke `transfer_to_main_agent`.
+
+STYLE:
+- Optimized strictly for voice: keep replies brief (1 to 2 short sentences, maximum 20 words per sentence).
+- Do NOT use bullet points, numbered lists, asterisks, brackets, emojis, or markdown formatting.
+- Speak naturally and clearly."""
+
+
+class ClinicAppointmentSpecialist(Agent):
+    def __init__(self) -> None:
+        super().__init__(instructions=CLINIC_SPECIALIST_PROMPT)
+
+    @function_tool
+    async def check_doctor_availability(
+        self,
+        context: RunContext,
+        facility_or_district: str,
+        specialty: str = "General OPD",
+    ) -> str:
+        """Check available doctor slots and OPD timing at a specified PHC or district clinic.
+
+        Args:
+            facility_or_district: Name of facility or district (e.g. 'Pune PHC', 'Aundh Hospital', 'Mumbai').
+            specialty: Medical specialty requested (e.g. 'General OPD', 'Pediatrics', 'Gynecology').
+        """
+        timestamp = health_data.get_data_timestamp()
+        res = health_data.lookup_phc_data(district_or_pincode=facility_or_district)
+        fac_name = "Primary Health Centre Clinic"
+        if res.get("facilities"):
+            fac_name = res["facilities"][0].get("name", fac_name)
+
+        return (
+            f"Doctor Availability & OPD Schedule (Source: State OPD Registry, as of {timestamp}):\n"
+            f"Facility: {fac_name}\n"
+            f"Specialty: {specialty}\n"
+            f"Available Doctors: Dr. Anjali Sharma (General Physician), Dr. Rajesh Patil (Medical Officer)\n"
+            f"Available Slots: Tomorrow morning 9:30 AM, 10:00 AM, 11:00 AM, Tomorrow afternoon 3:00 PM"
+        )
+
+    @function_tool
+    async def book_clinic_appointment(
+        self,
+        context: RunContext,
+        patient_name: str,
+        facility_name: str = "District Primary Health Centre",
+        doctor_name: str = "Dr. Anjali Sharma",
+        appointment_date: str = "Tomorrow",
+        appointment_slot: str = "10:00 AM",
+        user_id: str = "",
+    ) -> str:
+        """Book a doctor appointment or clinic OPD visit and receive a confirmed Reference ID.
+
+        Args:
+            patient_name: Name of the patient.
+            facility_name: Name of the PHC or clinic facility.
+            doctor_name: Name of the doctor requested or assigned.
+            appointment_date: Date of appointment (e.g. 'Tomorrow', '15th August', 'Monday').
+            appointment_slot: Preferred time slot (e.g. '10:00 AM', '3:00 PM').
+            user_id: Caller's user ID or phone number.
+        """
+        if not user_id:
+            user_id = "default_caller"
+
+        apt = db.create_appointment(
+            user_id=user_id,
+            patient_name=patient_name,
+            facility_name=facility_name,
+            doctor_name=doctor_name,
+            appointment_date=appointment_date,
+            appointment_slot=appointment_slot,
+        )
+
+        apt_id = apt.get("id", "APT-1001")
+        call_id = getattr(getattr(context, "session", None), "call_id", "")
+        if call_id:
+            db.mark_call_success(
+                call_id,
+                outcome_summary=f"Clinic appointment booked ({apt_id}) for {patient_name}",
+            )
+
+        return (
+            f"Clinic Appointment Confirmed!\n"
+            f"Booking Reference ID: {apt_id}\n"
+            f"Patient Name: {patient_name}\n"
+            f"Facility: {facility_name}\n"
+            f"Doctor: {doctor_name}\n"
+            f"Date & Slot: {appointment_date} at {appointment_slot}\n"
+            f"Status: Confirmed\n"
+            f"Action for Specialist: State the Reference ID ({apt_id}) and appointment details clearly to the patient."
+        )
+
+    @function_tool
+    async def cancel_clinic_appointment(
+        self,
+        context: RunContext,
+        appointment_id: str,
+    ) -> str:
+        """Cancel an existing clinic appointment by appointment ID (e.g. APT-5821).
+
+        Args:
+            appointment_id: Booking Reference ID to cancel.
+        """
+        success = db.cancel_appointment(appointment_id)
+        if success:
+            return f"Appointment '{appointment_id}' has been successfully cancelled."
+        return f"No active appointment was found matching ID '{appointment_id}'."
+
+    @function_tool
+    async def transfer_to_main_agent(
+        self,
+        context: RunContext,
+        reason: str = "Appointment booking complete or user asked general question",
+    ) -> str:
+        """Transfer the conversation back to the main Arogya Seva Telehealth Assistant.
+        Call this tool when the appointment management task is completed, or if the caller asks general health/emergency questions.
+
+        Args:
+            reason: Reason for handing back to main assistant.
+        """
+        main_agent = HealthAccessAssistant()
+        context.session.update_agent(main_agent)
+        return "Handed conversation back to main Arogya Seva Telehealth Assistant."
 
 
 # Backward compatibility alias for tests

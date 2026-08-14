@@ -95,6 +95,21 @@ def init_db() -> None:
             );
             """
         )
+        cursor.execute(
+            """
+            CREATE TABLE IF NOT EXISTS clinic_appointments (
+                id TEXT PRIMARY KEY,
+                user_id TEXT NOT NULL,
+                patient_name TEXT NOT NULL,
+                facility_name TEXT NOT NULL,
+                doctor_name TEXT NOT NULL,
+                appointment_date TEXT NOT NULL,
+                appointment_slot TEXT NOT NULL,
+                status TEXT DEFAULT 'confirmed',
+                created_at TEXT NOT NULL
+            );
+            """
+        )
         conn.commit()
     logger.info(f"Database initialized at {DB_PATH}")
 
@@ -731,3 +746,78 @@ def log_simulated_call(
         "outcome_summary": outcome_summary,
         "timestamp": now_iso,
     }
+
+
+def create_appointment(
+    user_id: str,
+    patient_name: str,
+    facility_name: str,
+    doctor_name: str,
+    appointment_date: str,
+    appointment_slot: str,
+) -> dict[str, Any]:
+    """Create and persist a new clinic appointment in the database."""
+    import random
+
+    init_db()
+    apt_id = f"APT-{random.randint(1000, 9999)}"
+    now_iso = datetime.now(timezone.utc).isoformat()
+
+    with get_connection() as conn:
+        cursor = conn.cursor()
+        cursor.execute(
+            """
+            INSERT INTO clinic_appointments (id, user_id, patient_name, facility_name, doctor_name, appointment_date, appointment_slot, status, created_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, 'confirmed', ?)
+            """,
+            (
+                apt_id,
+                user_id,
+                patient_name,
+                facility_name,
+                doctor_name,
+                appointment_date,
+                appointment_slot,
+                now_iso,
+            ),
+        )
+        conn.commit()
+
+    return {
+        "id": apt_id,
+        "user_id": user_id,
+        "patient_name": patient_name,
+        "facility_name": facility_name,
+        "doctor_name": doctor_name,
+        "appointment_date": appointment_date,
+        "appointment_slot": appointment_slot,
+        "status": "confirmed",
+        "created_at": now_iso,
+    }
+
+
+def get_appointments_for_user(user_id: str) -> list[dict[str, Any]]:
+    """Retrieve active appointments for a user."""
+    init_db()
+    with get_connection() as conn:
+        cursor = conn.cursor()
+        cursor.execute(
+            "SELECT * FROM clinic_appointments WHERE user_id = ? AND status = 'confirmed' ORDER BY created_at DESC",
+            (user_id,),
+        )
+        rows = cursor.fetchall()
+        return [dict(row) for row in rows]
+
+
+def cancel_appointment(appointment_id: str) -> bool:
+    """Cancel a clinic appointment by ID."""
+    init_db()
+    with get_connection() as conn:
+        cursor = conn.cursor()
+        cursor.execute(
+            "UPDATE clinic_appointments SET status = 'cancelled' WHERE id = ?",
+            (appointment_id,),
+        )
+        conn.commit()
+        return cursor.rowcount > 0
+

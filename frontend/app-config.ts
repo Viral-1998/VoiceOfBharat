@@ -34,9 +34,9 @@ export interface AppConfig {
 
 export const APP_CONFIG_DEFAULTS: AppConfig = {
   companyName: 'Arogya Seva',
-  pageTitle: 'Arogya Seva — Telehealth Voice Assistant (Human Escalation) | #VoiceForBharat Day 7',
+  pageTitle: 'Arogya Seva — Telehealth Voice Assistant (Specialist Handoff) | #VoiceForBharat Day 9',
   pageDescription:
-    'Telehealth voice assistant with consent-based human help escalation powered by Murf Falcon TTS',
+    'Telehealth voice assistant with specialist agent handoff to Clinic & Appointment Specialist powered by Murf Falcon TTS',
 
   supportsChatInput: true,
   supportsVideoInput: false,
